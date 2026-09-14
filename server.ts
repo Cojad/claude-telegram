@@ -1038,8 +1038,17 @@ function tryBecomePoller(): void {
   startPolling()
 }
 
-tryBecomePoller()
-if (!polling) {
+// Local patch (not upstream): TELEGRAM_STANDBY_ONLY=1 in the state dir's .env
+// (or the environment) makes this instance never claim the polling slot and
+// never touch the Telegram API — outbound tools only. Used for the default
+// state dir so non-channel sessions and teammates stay inert.
+const STANDBY_ONLY = process.env.TELEGRAM_STANDBY_ONLY === '1'
+if (STANDBY_ONLY) {
+  process.stderr.write('telegram channel: TELEGRAM_STANDBY_ONLY=1 — never polling, outbound tools only\n')
+} else {
+  tryBecomePoller()
+}
+if (!polling && !STANDBY_ONLY) {
   process.stderr.write(
     `telegram channel: another session's poller holds this channel — ` +
     `outbound tools active, standing by to take over inbound when it exits\n`,
