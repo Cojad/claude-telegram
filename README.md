@@ -96,3 +96,10 @@ assistant needs earlier context, it will ask you to paste or summarize.
 This also means there's no `download_attachment` tool for historical messages
 — photos are downloaded eagerly on arrival since there's no way to fetch them
 later.
+
+## Live progress via hooks (companion pattern)
+
+A "thinking…" placeholder that updates line by line as the assistant works, then deletes
+itself a few seconds after the final answer — built from four Claude Code hook events, not
+plugin code. See **[docs/tg-live-progress-hooks.md](./docs/tg-live-progress-hooks.md)** for how
+it works and [examples/hooks/](./examples/hooks/) for ready-to-copy scripts.
