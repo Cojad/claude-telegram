@@ -159,6 +159,8 @@
     display:inline-block; margin-top:10px; font-family:'IBM Plex Mono',monospace; font-size:11px;
     letter-spacing:.04em; padding:2px 8px; border-radius:3px; background:var(--surface-2); color:var(--ink-soft);
   }
+  .phase .risk.done{background:var(--accent-soft); color:var(--accent-ink);}
+  .phase.done{opacity:.85}
 
   footer{
     margin-top:70px; padding-top:20px; border-top:1px solid var(--line);
@@ -439,12 +441,12 @@
     <span class="num-tag">06 / 順序</span>
     <h2>四個階段, 有前後依賴</h2>
     <div class="phases">
-      <div class="phase">
+      <div class="phase done">
         <div class="pnum">1</div>
         <div>
-          <h3>拆出 policy 跟 poller 兩個模組</h3>
-          <p>純搬移, 不改行為. 拆完先跑 test/poller-lifecycle.test.ts 加手動雙 session 驗證, 確定跟今晚驗過的行為一致再繼續.</p>
-          <span class="risk">風險低 · 純重構</span>
+          <h3>拆出六個模組 — 完成</h3>
+          <p>實際執行時比原訂範圍大: 除了 policy 跟 poller, 也把 outbound / transport / inbound 一起拆完, format 併在 Stage A. 每一塊都跑 bun test 加手動雙 session 驗證. 過程中一次 find-and-replace 手滑誤刪了 mcp.connect(), 21 條自動測試當時全過卻沒抓到, 手動雙 process 驗證才發現 standby 角色會安靜退出; 修好後補了一組真的講 MCP 協定的測試 (test/mcp-protocol.test.ts), 這類測試原本在 test plan 裡被歸類成不划算, 現在證明想錯了. server.ts 從 934 行降到 280 行.</p>
+          <span class="risk done">已完成 · 24 條測試全過</span>
         </div>
       </div>
       <div class="phase">
