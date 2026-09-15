@@ -139,3 +139,15 @@ test('formatMessageRow with includeRaw: true but no raw present adds nothing ext
   const text = formatMessageRow(rec(), { includeRaw: true })
   expect(text).not.toContain('raw:')
 })
+
+test('formatMessageRow flags mtproto and rich_message, before the raw marker', () => {
+  const both = formatMessageRow(rec({ mtproto: true, rich_message: true, raw: '{}' }))
+  const bracket = both.match(/\[([^\]]*)\]/)![1]
+  expect(bracket.split(', ')).toEqual(['mtproto', 'rich_message', 'raw'])
+})
+
+test('formatMessageRow says nothing extra when mtproto/rich_message are false', () => {
+  const text = formatMessageRow(rec({ mtproto: false, rich_message: false }))
+  expect(text).not.toContain('mtproto')
+  expect(text).not.toContain('rich_message')
+})

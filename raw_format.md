@@ -99,6 +99,34 @@ some message
 
 邏輯在 `policy.ts` 的 `InboundContext.mtproto` 型別, `mtproto.ts` 的 `buildMtprotoContext()` 設值, `inbound.ts` 的 `handleInbound()` 讀出並塞進 `meta.mtproto`, 見 `test/inbound.test.ts` 跟 `test/mtproto.test.ts`.
 
+## 六之二, 來源標記: `rich_message`
+
+```xml
+<channel source="plugin:telegram:telegram" chat_id="-1001068509881" message_id="154860" user="BaldEagleBot" user_id="133770478" ts="2026-09-16T04:07:47.000Z" rich_message="true">
+**🦞 OpenClaw 2026.8.2**\n\n| Item | Value |\n| --- | --- |
+</channel>
+```
+
+| 屬性 | 何時出現 |
+|---|---|
+| `rich_message` | 值固定是字串 `"true"`, 跟 `mtproto` 同一個約定(不是 bare boolean, 因為 meta 物件裡其他每個欄位都是字串, 見下面第四節的 JSON 形狀). 只在這則訊息的內容原本是 Bot API 10.x 的 Rich Message(`message.rich_message.blocks`, 不是 `message.text`/`caption`)才有這個屬性. `content` 欄位此時已經是 `rich.ts` 攤平過的 Markdown 文字, 不是原始 block 結構. |
+
+**為什麼需要這個:** 2026-09-16 發現 OpenClaw 現在幾乎所有回覆(不只 `/status`, 連打招呼)都走 rich_message 格式. 攤平後的文字讀起來跟一般訊息沒有視覺差異, 但攤平是有損的(媒體 block 變成 `[photo]` 這種佔位符, 某些 inline mark 沒有乾淨的 Markdown 對應), 這個標記讓讀者知道「這段文字是重建出來的, 不是對方原始打的字」, 需要對照原始結構時知道要往哪個方向查.
+
+邏輯在 `policy.ts` 的 `InboundContext.message.rich_message` 型別, `transport.ts` 的 `bot.on('message:rich_message', ...)` handler 攤平內容, `inbound.ts` 的 `handleInbound()` 讀出並塞進 `meta.rich_message`, 見 `test/rich.test.ts` 跟 `test/policy.test.ts` 裡對應的 regression test.
+
+**跟 `lookup_message` 的關係:** `mtproto`/`rich_message` 從 2026-09-16 起也持久化進 `store.ts` 的 `messages` 表(各自一個 nullable `INTEGER` 欄位), `formatMessageRow` 會在 meta 方括號裡依序顯示 `mtproto`、`rich_message`、`raw`(有才顯示, 順序固定), 例如:
+
+```
+#154860 in  09-16 04:07:47 133770478  [undelivered, rich_message]
+**🦞 OpenClaw 2026.8.2**\n\n...
+
+#154847 in  09-16 04:01:59 133770478  [undelivered, mtproto, raw]
+(空, MessageMediaUnsupported)
+```
+
+`raw` 的呈現邏輯不變(預設只顯示有無, `lookup_message` 查單一 `message_id` 才會把完整 raw 內容印出來), `mtproto`/`rich_message` 兩者一律直接顯示, 不像 `raw` 有 `includeRaw` 那道額外開關, 因為它們本身就只是短字串, 沒有「太長不該預設印出來」的問題.
+
 ## 四, 對應到原始碼: 實際送出的 JSON-RPC 通知
 
 `inbound.ts` 的 `createHandleInbound()` 組出的通知大致是這個形狀:
@@ -114,6 +142,8 @@ some message
       "user": "<username 或 user_id 字串>",
       "user_id": "<string>",
       "ts": "<ISO8601 UTC>",
+      "mtproto": "<固定字串 \"true\", 只在走 mtproto.ts 時才存在>",
+      "rich_message": "<固定字串 \"true\", 只在原始內容是 Bot API 10.x Rich Message 時才存在>",
       "reply_to_message_id": "<string, 可選>",
       "reply_to_text": "<string, 可選, 最長 200 字元>",
       "image_path": "<string, 可選>",

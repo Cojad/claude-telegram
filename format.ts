@@ -82,6 +82,12 @@ export function formatMessageRow(r: MessageRecord, opts?: { includeRaw?: boolean
   if (r.attachment_kind) {
     meta.push(r.attachment_file_id ? `📎${r.attachment_kind}:${r.attachment_file_id}` : `📎${r.attachment_kind}`)
   }
+  // Which transport/format produced this — same short-tag convention as
+  // the rest of this array, shown before `raw` since they explain *why*
+  // a raw blob exists (mtproto) or *why* content was flattened
+  // (rich_message), not just that one does.
+  if (r.mtproto) meta.push('mtproto')
+  if (r.rich_message) meta.push('rich_message')
   // Presence marker by default — the raw blob itself can be large (a whole
   // GramJS Message object) and most messages don't have one at all, so
   // dumping it into every row of a list would defeat the point of this

@@ -25,6 +25,12 @@ function rec(overrides: Partial<MessageRecord>): MessageRecord {
     direction: 'in',
     ts: '2026-09-15T00:00:00.000Z',
     delivered: true,
+    // toRecord() always coerces these to a concrete boolean (row.mtproto
+    // === 1), never leaves them undefined the way `raw` stays undefined —
+    // matching that here so a round-trip .toEqual() isn't comparing a
+    // record shape that lookup() can never actually return.
+    mtproto: false,
+    rich_message: false,
     ...overrides,
   }
 }
@@ -40,6 +46,14 @@ test('record then lookup by (chat_id, message_id) round-trips every field', () =
     message_id: '42', user_id: '137438526', content: 'hello',
     reply_to_message_id: '10', attachment_kind: 'photo', attachment_file_id: 'ABC123',
   }))
+})
+
+test('mtproto and rich_message flags round-trip as true when set', () => {
+  const store = freshStore()
+  store.record(rec({ message_id: '43', mtproto: true, rich_message: true, raw: '{"className":"Message"}' }))
+  const found = store.lookup('-100', '43')
+  expect(found?.mtproto).toBe(true)
+  expect(found?.rich_message).toBe(true)
 })
 
 test('lookup on an id that was never recorded returns null, not throw', () => {

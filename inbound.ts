@@ -133,6 +133,8 @@ export function createHandleInbound(deps: InboundDeps) {
           attachment_file_id: attachment?.file_id,
           delivered,
           raw: ctx.raw,
+          mtproto: ctx.mtproto,
+          rich_message: ctx.message?.rich_message != null,
         })
       } catch (err) {
         process.stderr.write(`telegram channel: store.record (inbound) failed: ${err}\n`)
@@ -233,6 +235,14 @@ export function createHandleInbound(deps: InboundDeps) {
           // this flag there was no way to tell which one actually delivered
           // a given message.
           ...(ctx.mtproto ? { mtproto: 'true' } : {}),
+          // Same string-literal convention as mtproto above, not a bare
+          // boolean — every other field in this meta object is a string
+          // (String(msgId), String(attachment.size), ...), and the
+          // downstream consumer renders meta as <channel ...> tag
+          // attributes, which are strings regardless. Matching that keeps
+          // this the only object in the codebase without a mixed-type
+          // field, not just "because mtproto happened to do it first".
+          ...(ctx.message?.rich_message ? { rich_message: 'true' } : {}),
           ...replyMeta,
           ...(imagePath ? { image_path: imagePath } : {}),
           ...(attachment ? {
