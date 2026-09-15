@@ -38,10 +38,10 @@ afterAll(async () => {
   rmSync(dir, { recursive: true, force: true })
 })
 
-test('tools/list returns exactly the five documented tools', async () => {
+test('tools/list returns exactly the six documented tools', async () => {
   const { tools } = await client.listTools()
   expect(tools.map(t => t.name).sort()).toEqual(
-    ['download_attachment', 'edit_message', 'lookup_message', 'react', 'reply'].sort(),
+    ['download_attachment', 'edit_message', 'lookup_message', 'react', 'reply', 'send_sticker'].sort(),
   )
 })
 

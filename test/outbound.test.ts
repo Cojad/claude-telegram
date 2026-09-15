@@ -10,10 +10,11 @@ import { callTool, type OutboundDeps } from '../outbound'
 import { openStore, type Store } from '../store'
 
 const stores: Store[] = []
-function harness(): { deps: OutboundDeps; sentTexts: string[] } {
+function harness(): { deps: OutboundDeps; sentTexts: string[]; stickerCalls: Array<{ chat_id: string; sticker: unknown; other: unknown }> } {
   const store = openStore(':memory:')
   stores.push(store)
   const sentTexts: string[] = []
+  const stickerCalls: Array<{ chat_id: string; sticker: unknown; other: unknown }> = []
   let nextMessageId = 1000
   const bot = {
     api: {
@@ -26,6 +27,10 @@ function harness(): { deps: OutboundDeps; sentTexts: string[] } {
       },
       setMessageReaction: async () => {},
       getFile: async () => ({ file_path: undefined }),
+      sendSticker: async (chat_id: string, sticker: unknown, other: unknown) => {
+        stickerCalls.push({ chat_id, sticker, other })
+        return { message_id: nextMessageId++ }
+      },
     },
   } as never
   const deps: OutboundDeps = {
@@ -39,7 +44,7 @@ function harness(): { deps: OutboundDeps; sentTexts: string[] } {
     assertSendable: () => {},
     store,
   }
-  return { deps, sentTexts }
+  return { deps, sentTexts, stickerCalls }
 }
 afterEach(() => { for (const s of stores.splice(0)) s.close() })
 
@@ -109,4 +114,42 @@ test('lookup_message on a non-allowlisted chat_id is rejected the same as reply/
   const looked = await callTool('lookup_message', { chat_id: '999999' }, deps)
   expect(looked.isError).toBe(true)
   expect(looked.content[0].text).toContain('not allowlisted')
+})
+
+test('send_sticker by file_id records the sent message under the id Telegram returned', async () => {
+  const { deps, stickerCalls } = harness()
+  const result = await callTool('send_sticker', { chat_id: '1', file_id: 'CAACAgUdummy' }, deps)
+  expect(result.isError).toBeUndefined()
+  const sentId = result.content[0].text.match(/id: (\d+)/)![1]
+  expect(deps.store.lookup('1', sentId)).toMatchObject({ chat_id: '1', message_id: sentId, direction: 'out', delivered: true })
+  expect(stickerCalls).toHaveLength(1)
+  expect(stickerCalls[0].sticker).toBe('CAACAgUdummy')
+})
+
+test('send_sticker with reply_to records reply_to_message_id and passes reply_parameters through', async () => {
+  const { deps, stickerCalls } = harness()
+  await callTool('send_sticker', { chat_id: '1', file_id: 'CAACAgUdummy', reply_to: '55' }, deps)
+  const [{ other }] = stickerCalls
+  expect((other as { reply_parameters?: { message_id: number } }).reply_parameters).toEqual({ message_id: 55 })
+})
+
+test('send_sticker requires either file_id or file', async () => {
+  const { deps } = harness()
+  const result = await callTool('send_sticker', { chat_id: '1' }, deps)
+  expect(result.isError).toBe(true)
+  expect(result.content[0].text).toContain('requires either file_id or file')
+})
+
+test('send_sticker rejects passing both file_id and file', async () => {
+  const { deps } = harness()
+  const result = await callTool('send_sticker', { chat_id: '1', file_id: 'a', file: '/tmp/x.webp' }, deps)
+  expect(result.isError).toBe(true)
+  expect(result.content[0].text).toContain('pass only one of file_id or file')
+})
+
+test('send_sticker on a non-allowlisted chat_id is rejected the same as reply/react', async () => {
+  const { deps } = harness()
+  const result = await callTool('send_sticker', { chat_id: '999999', file_id: 'a' }, deps)
+  expect(result.isError).toBe(true)
+  expect(result.content[0].text).toContain('not allowlisted')
 })

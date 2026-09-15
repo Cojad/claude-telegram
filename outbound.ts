@@ -83,6 +83,25 @@ export const TOOL_DEFINITIONS = [
     },
   },
   {
+    name: 'send_sticker',
+    description:
+      'Send a Telegram sticker. Pass chat_id from the inbound message, and either file_id (a sticker already on Telegram servers, e.g. from lookup_message or a sticker set) or file (an absolute local path to a .webp/.tgs/.webm to upload directly, not yet part of any set). Optionally reply_to (message_id) for threading.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        chat_id: { type: 'string' },
+        file_id: { type: 'string', description: 'Sticker file_id already known to Telegram. Mutually exclusive with file.' },
+        file: { type: 'string', description: 'Absolute path to a local .webp/.tgs/.webm sticker file to upload. Mutually exclusive with file_id.' },
+        reply_to: {
+          type: 'string',
+          description: 'Message ID to thread under. Use message_id from the inbound <channel> block.',
+        },
+        emoji: { type: 'string', description: 'Emoji associated with the sticker. Only applies when uploading via file; ignored for file_id.' },
+      },
+      required: ['chat_id'],
+    },
+  },
+  {
     name: 'lookup_message',
     description: 'Look up messages this plugin has seen (sent or received) in a chat, from the local SQLite log — not the Telegram API, which has no history endpoint. Pass message_id for one exact message (e.g. to resolve a reply_to_message_id that had no reply_to_text), or omit it and use limit for the most recent messages in that chat. Includes messages gate() dropped (delivered: false) and nothing else about them.',
     inputSchema: {
@@ -205,6 +224,49 @@ export async function callTool(name: string, args: Record<string, unknown>, deps
             ? `sent (id: ${sentIds[0]})`
             : `sent ${sentIds.length} parts (ids: ${sentIds.join(', ')})`
         return { content: [{ type: 'text', text: result }] }
+      }
+      case 'send_sticker': {
+        const chat_id = args.chat_id as string
+        const file_id = args.file_id as string | undefined
+        const filePath = args.file as string | undefined
+        const reply_to = args.reply_to != null ? Number(args.reply_to) : undefined
+        const emoji = args.emoji as string | undefined
+
+        assertAllowedChat(chat_id)
+
+        if (!file_id && !filePath) throw new Error('send_sticker requires either file_id or file')
+        if (file_id && filePath) throw new Error('send_sticker: pass only one of file_id or file, not both')
+
+        let sticker: string | InputFile
+        if (filePath) {
+          assertSendable(filePath)
+          const st = statSync(filePath)
+          if (st.size > MAX_ATTACHMENT_BYTES) {
+            throw new Error(`file too large: ${filePath} (${(st.size / 1024 / 1024).toFixed(1)}MB, max 50MB)`)
+          }
+          sticker = new InputFile(filePath)
+        } else {
+          sticker = file_id as string
+        }
+
+        const access = loadAccess()
+        const replyMode = access.replyToMode ?? 'first'
+        const opts = {
+          ...(reply_to != null && replyMode !== 'off' ? { reply_parameters: { message_id: reply_to } } : {}),
+          ...(emoji ? { emoji } : {}),
+        }
+
+        const sent = await bot.api.sendSticker(chat_id, sticker, opts)
+        try {
+          store.record({
+            chat_id, message_id: String(sent.message_id), direction: 'out',
+            ts: new Date().toISOString(), content: `(sticker: ${file_id ?? filePath})`, delivered: true,
+            ...(reply_to != null ? { reply_to_message_id: String(reply_to) } : {}),
+          })
+        } catch (err) {
+          process.stderr.write(`telegram channel: store.record (send_sticker) failed: ${err}\n`)
+        }
+        return { content: [{ type: 'text', text: `sent (id: ${sent.message_id})` }] }
       }
       case 'react': {
         assertAllowedChat(args.chat_id as string)
