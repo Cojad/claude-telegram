@@ -6,7 +6,8 @@
 // full text must reconstruct losslessly.
 
 import { expect, test } from 'bun:test'
-import { chunk } from '../format'
+import { chunk, formatMessageRow, formatMessageRows } from '../format'
+import type { MessageRecord } from '../store'
 
 function endsWithLoneHighSurrogate(s: string): boolean {
   const code = s.charCodeAt(s.length - 1)
@@ -56,4 +57,66 @@ test('a hard cut never splits a UTF-16 surrogate pair (emoji)', () => {
   for (let i = 1; i < parts.length; i++) {
     expect(startsWithLoneLowSurrogate(parts[i])).toBe(false)
   }
+})
+
+// Purpose-driven tests for formatMessageRow/Rows — see
+// telegram-slash-output-format.md (memory, not in this repo) for why this
+// replaced JSON.stringify: repeated field names/braces per message where
+// the actual information (content, file_ids, reply chains) is a small
+// fraction of the bytes. Two concrete risks: (1) ts is stored as UTC —
+// showing that raw to a GMT+8 reader is the exact bug this house always
+// flags; (2) "compact" must not mean "lossy" — file_ids in particular are
+// consumed verbatim by download_attachment later, so they must never be
+// truncated.
+
+function rec(overrides: Partial<MessageRecord> = {}): MessageRecord {
+  return {
+    chat_id: '1',
+    message_id: '42',
+    direction: 'in',
+    ts: '2026-09-15T05:16:08.000Z',
+    delivered: true,
+    ...overrides,
+  }
+}
+
+test('formatMessageRow shows GMT+8, not the raw UTC timestamp', () => {
+  const text = formatMessageRow(rec())
+  expect(text).toContain('13:16:08') // 05:16:08 UTC + 8h
+  expect(text).not.toContain('05:16:08')
+  expect(text).not.toContain('UTC')
+  expect(text).not.toContain('Z')
+})
+
+test('formatMessageRow keeps content verbatim, including embedded newlines', () => {
+  const text = formatMessageRow(rec({ content: 'line one\nline two' }))
+  expect(text).toContain('line one')
+  expect(text).toContain('line two')
+})
+
+test('formatMessageRow never truncates the attachment file_id — download_attachment needs it exact', () => {
+  const longId = 'A'.repeat(120)
+  const text = formatMessageRow(rec({ attachment_kind: 'sticker', attachment_file_id: longId }))
+  expect(text).toContain(longId)
+})
+
+test('formatMessageRow flags an undelivered (gate-dropped) message; says nothing extra when delivered', () => {
+  const dropped = formatMessageRow(rec({ delivered: false }))
+  const delivered = formatMessageRow(rec({ delivered: true }))
+  expect(dropped).toContain('undelivered')
+  expect(delivered).not.toContain('undelivered')
+})
+
+test('formatMessageRow surfaces reply_to_message_id when present', () => {
+  const text = formatMessageRow(rec({ reply_to_message_id: '41' }))
+  expect(text).toContain('41')
+})
+
+test('formatMessageRows renders "(no messages)" for an empty list, not an empty string', () => {
+  expect(formatMessageRows([])).toBe('(no messages)')
+})
+
+test('formatMessageRows preserves caller-given order (newest-first is the caller\'s job)', () => {
+  const text = formatMessageRows([rec({ message_id: '2', content: 'second' }), rec({ message_id: '1', content: 'first' })])
+  expect(text.indexOf('second')).toBeLessThan(text.indexOf('first'))
 })

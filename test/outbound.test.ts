@@ -68,12 +68,16 @@ test('edit_message replaces the recorded content for that message_id, not a new 
   expect(deps.store.recent('1', 10)).toHaveLength(1)
 })
 
-test('lookup_message by message_id returns the recorded row as JSON', async () => {
+test('lookup_message by message_id returns a compact one-record text block, GMT+8 not UTC', async () => {
   const { deps } = harness()
   const sent = await callTool('reply', { chat_id: '1', text: 'findable' }, deps)
   const id = sent.content[0].text.match(/id: (\d+)/)![1]
   const looked = await callTool('lookup_message', { chat_id: '1', message_id: id }, deps)
-  expect(JSON.parse(looked.content[0].text)).toMatchObject({ content: 'findable', message_id: id })
+  const text = looked.content[0].text
+  expect(text).toContain(`#${id}`)
+  expect(text).toContain('findable')
+  expect(text).not.toContain('UTC')
+  expect(text).not.toContain('{') // not JSON
 })
 
 test('lookup_message for an id never seen returns "not found", not an error', async () => {
@@ -88,8 +92,16 @@ test('lookup_message with no message_id lists recent messages, newest first', as
   await callTool('reply', { chat_id: '1', text: 'first' }, deps)
   await callTool('reply', { chat_id: '1', text: 'second' }, deps)
   const looked = await callTool('lookup_message', { chat_id: '1', limit: '5' }, deps)
-  const rows = JSON.parse(looked.content[0].text)
-  expect(rows.map((r: { content: string }) => r.content)).toEqual(['second', 'first'])
+  const text = looked.content[0].text
+  // newest first: 'second' has to appear before 'first' in the rendered text
+  expect(text.indexOf('second')).toBeGreaterThanOrEqual(0)
+  expect(text.indexOf('second')).toBeLessThan(text.indexOf('first'))
+})
+
+test('lookup_message with no results returns a placeholder, not an empty string', async () => {
+  const { deps } = harness()
+  const looked = await callTool('lookup_message', { chat_id: '1' }, deps)
+  expect(looked.content[0].text).toBe('(no messages)')
 })
 
 test('lookup_message on a non-allowlisted chat_id is rejected the same as reply/react', async () => {
