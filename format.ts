@@ -67,8 +67,12 @@ function tsGmt8(iso: string): string {
 // lines of braces/quotes/repeated-field-names per message, most of it
 // punctuation. This is the same information (nothing dropped — file_ids
 // and content are kept in full, never truncated, since a caller may need
-// the exact file_id for download_attachment) in roughly one line of
-// metadata plus the verbatim content, GMT+8 instead of raw UTC.
+// the exact file_id for download_attachment) as a fixed two lines per
+// message: metadata, then content. Content's own newlines are literal
+// `\n` (two characters), not real line breaks — that's what pins the
+// record to exactly two physical lines, so a message boundary is always
+// "blank line, then a line starting with #", never ambiguous with a
+// multi-line body the way an indented rendering would be.
 export function formatMessageRow(r: MessageRecord): string {
   const dir = r.direction === 'in' ? 'in ' : 'out'
   const who = r.direction === 'out' ? 'bot' : (r.user_id ?? '?')
@@ -80,7 +84,7 @@ export function formatMessageRow(r: MessageRecord): string {
   }
   const header = `#${r.message_id} ${dir} ${tsGmt8(r.ts)} ${who}${meta.length ? '  [' + meta.join(', ') + ']' : ''}`
   const body = r.content
-  return body ? `${header}\n  ${body.replace(/\n/g, '\n  ')}` : header
+  return body ? `${header}\n${body.replace(/\n/g, '\\n')}` : header
 }
 
 export function formatMessageRows(rows: MessageRecord[]): string {

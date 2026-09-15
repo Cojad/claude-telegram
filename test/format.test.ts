@@ -88,10 +88,11 @@ test('formatMessageRow shows GMT+8, not the raw UTC timestamp', () => {
   expect(text).not.toContain('Z')
 })
 
-test('formatMessageRow keeps content verbatim, including embedded newlines', () => {
-  const text = formatMessageRow(rec({ content: 'line one\nline two' }))
-  expect(text).toContain('line one')
-  expect(text).toContain('line two')
+test('formatMessageRow pins each record to exactly two physical lines — content newlines become literal \\n', () => {
+  const text = formatMessageRow(rec({ content: 'line one\nline two\nline three' }))
+  const lines = text.split('\n')
+  expect(lines).toHaveLength(2) // meta, then content — real newlines from the content must not add more
+  expect(lines[1]).toBe('line one\\nline two\\nline three') // literal backslash-n, not a real break
 })
 
 test('formatMessageRow never truncates the attachment file_id — download_attachment needs it exact', () => {
