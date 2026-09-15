@@ -1,6 +1,17 @@
 # Claude 這端實際收到的 raw format
 
-記錄 Claude Code (透過這個 plugin 的 channel 機制) 從 Telegram 收到一則訊息時, 實際能看到的資料長什麼樣子, 以及對應到 `server.ts` 原始碼的哪一段. 2026-09-15 從 v0.0.7 (含本機套用的 PR #5604 patch) 實測整理.
+記錄 Claude Code (透過這個 plugin 的 channel 機制) 從 Telegram 收到一則訊息時, 實際能看到的資料長什麼樣子, 以及對應到原始碼的哪一段. 2026-09-15 從 v0.0.7 (含本機套用的 PR #5604 patch) 實測整理.
+
+**版本說明:** 一, 二節的範例是柯姊當晚在**正式部署的 channel** (跟這個 fork 起點相同的 v0.0.7 + #5604 + STANDBY_ONLY) 裡實際收到的原始標籤, 逐字照抄. 三節 (reply_to) 是這個 fork 在模組化之後才新增的功能, 目前**只存在這個 repo, 尚未部署到正式 channel**, 範例是照程式邏輯手寫建構的, 不是真的線上截圖, 已在 `test/inbound.test.ts` 用同樣的資料形狀驗證過.
+
+自 2026-09-15 模組化後, 邏輯分散在多個檔案, 不再是單一 server.ts:
+- 存取判斷 (gate/isMentioned): `policy.ts`
+- 收到訊息後怎麼組成通知送給 Claude: `inbound.ts` 的 `handleInbound()` / `buildReplyMeta()`
+- 怎麼從 Telegram 接原始事件, 怎麼下載附件: `transport.ts`
+- 對外的 4 個工具: `outbound.ts`
+- 誰在跟 Telegram 排隊收信: `poller.ts`
+- 純文字分段: `format.ts`
+- `server.ts` 現在只是把以上幾塊組裝起來的進入點
 
 ## 兩個層次
 
@@ -54,9 +65,26 @@ cc 請你用raw format給我, 你收到的meta跟content整包長甚麼樣子就
 
 `image_path` 和 `attachment_*` 是互斥的兩種路徑: 圖片走自動下載 (`downloadImage` callback), 其他附件類型只給 `file_id`, 要 Claude 自己主動呼叫 `download_attachment` 才會落地成檔案.
 
-## 三, 對應到原始碼: server.ts 實際送出的 JSON-RPC 通知
+## 三, 回覆訊息時多出來的屬性 (此 fork 新增, 尚未部署到正式 channel)
 
-`handleInbound()` (server.ts, 約 887 行起) 組出的通知大致是這個形狀:
+```xml
+<channel source="plugin:telegram:telegram" chat_id="-1004427695342" message_id="100" user="Cojad" user_id="137438526" ts="2026-09-15T04:10:00.000Z" reply_to_message_id="55" reply_to_text="earlier question">
+here is my answer
+</channel>
+```
+
+| 屬性 | 何時出現 |
+|---|---|
+| `reply_to_message_id` | 這則是回覆某一則舊訊息時, 被回覆那則的 message_id |
+| `reply_to_text` | 被回覆那則的文字或 caption, 超過 200 字元會截斷並加 `…`. 純貼圖/無文字的訊息會有 id 沒有這個欄位 |
+
+**已知限制:** Telegram 只在**該則訊息夠新**時才會把完整的 reply_to_message 物件內附在更新裡; 太舊的訊息可能只給得到 (或完全給不到) 這個資訊, 這種情況目前**沒有備援**, `reply_to_text` 就會缺席. plan.html §05 規劃的 SQLite 訊息紀錄是這個限制的後續解法, 屆時 `reply_to_text` 缺席時會改查本機資料庫, 但那部分還沒實作.
+
+邏輯在 `inbound.ts` 的 `buildReplyMeta()`, 純函式, 見 `test/inbound.test.ts`.
+
+## 四, 對應到原始碼: 實際送出的 JSON-RPC 通知
+
+`inbound.ts` 的 `createHandleInbound()` 組出的通知大致是這個形狀:
 
 ```json
 {
@@ -69,6 +97,8 @@ cc 請你用raw format給我, 你收到的meta跟content整包長甚麼樣子就
       "user": "<username 或 user_id 字串>",
       "user_id": "<string>",
       "ts": "<ISO8601 UTC>",
+      "reply_to_message_id": "<string, 可選>",
+      "reply_to_text": "<string, 可選, 最長 200 字元>",
       "image_path": "<string, 可選>",
       "attachment_kind": "<string, 可選>",
       "attachment_file_id": "<string, 可選>",
@@ -80,20 +110,22 @@ cc 請你用raw format給我, 你收到的meta跟content整包長甚麼樣子就
 }
 ```
 
-這段是**回推重建**, 不是 Claude 直接觀察到的原始 JSON — Claude 沒有管道去確認欄位順序或是否還有其他從未在 `<channel>` 標籤裡出現過的隱藏欄位.
+跟前一版不同: 這段現在**不是回推重建**, 而是 `test/inbound.test.ts` 直接斷言過的真實結構 (攔截 `mcp.notification` 呼叫, 檢查送出的物件). 唯一還是回推的部分是欄位在真正的 JSON-RPC wire format 裡的順序, Claude 看到的 `<channel>` 標籤本身也不會透露這點.
 
-## 四, 已確認完全沒有的資訊 (功能缺口, 非隱藏)
+## 五, 已確認完全沒有的資訊 (功能缺口, 非隱藏)
 
-- **被回覆訊息的任何資訊**: `ctx.message.reply_to_message` 在 server.ts 裡整支程式**只用過一次** (isMentioned() 裡拿來判斷「這算不算點名我」的布林值), 判斷完就丟棄, 完全沒有任何欄位 (原文內容, message_id, 發送者, 時間) 被包進送給 Claude 的通知裡. 換句話說 Claude 沒有辦法知道使用者回覆的是哪一則.
 - **Telegram message entities** (如 @mention, hashtag, url 等結構化標註) 本身不會轉發, 只在 server 端內部用來判斷點名, 不出現在 Claude 收到的 meta 裡.
-- **群組成員名單, 訊息歷史**: Telegram Bot API 本身就不提供群組歷史查詢, plugin 也沒有另外快取, Claude 只看得到自己在線期間新進來的訊息.
+- **群組成員名單, 訊息歷史**: Telegram Bot API 本身就不提供群組歷史查詢, plugin 也沒有另外快取, Claude 只看得到自己在線期間新進來的訊息. (plan.html §05 的 SQLite 訊息紀錄規劃要解的就是這塊, 尚未實作.)
 - **被 gate() 丟棄的訊息**: 完全不留紀錄, 連 debug log 都沒有, 不只 Claude 看不到, 連事後用 `--debug` 查都查不到.
+- **太舊訊息的 reply_to_text**: 見上面第三節的已知限制.
 
-## 五, 與此 repo 的關係
+## 六, 與此 repo 的關係
 
-本 repo 是 `anthropics/claude-plugins-official` 底下 `external_plugins/telegram` 的 fork, 起點是 v0.0.7 原始碼 (與上游 main 逐位元組相同). Git history:
+本 repo 是 `anthropics/claude-plugins-official` 底下 `external_plugins/telegram` 的 fork, 起點是 v0.0.7 原始碼 (與上游 main 逐位元組相同). Git history 概要 (詳細看 `git log --oneline`):
 
-1. 第一個 commit: 原封不動匯入 v0.0.7, 保留與上游比對的基準
-2. 後續 commit: 套用上游 PR #5604 (合作式 poller, 不再 SIGTERM 活著的持有者) 與本機自製的 `TELEGRAM_STANDBY_ONLY` 補丁 (見 `~/.claude/projects/-x-code/memory/telegram-upstream-prs.md`)
+1. 匯入原封不動的 v0.0.7, 當作跟上游比對的基準
+2. 套上游 PR #5604 (合作式 poller) 與本機自製的 `TELEGRAM_STANDBY_ONLY` 補丁 (見 `~/.claude/projects/-x-code/memory/telegram-upstream-prs.md`)
+3. 模組化: 拆成 policy / format / poller / outbound / transport / inbound 六個檔案, 每步都補了對應測試 (`bun test`, 目前 31 條全過)
+4. 加 `reply_to_message_id` / `reply_to_text` (本節第三段)
 
-改進方向 (規劃中, 尚未實作) 至少包含: 把被回覆訊息的原文一併送出, 把 gate() 丟棄的訊息留一份可查詢的紀錄 (供除錯用, 不代表要違反使用者未點名就不處理的存取控制原則), 以及讓自訂的 `mentionPatterns` regex 在設定時就能被驗證, 避免像 CJK `\b` 那種從設定當天就失效卻沒人發現的坑再次發生.
+尚未實作: plan.html §05 的 SQLite 訊息紀錄與 `lookup_message` 工具, §03 的可插拔 inbound sink (讓別的 harness 也能接), 以及讓自訂的 `mentionPatterns` regex 在設定時就能被驗證 (避免像 CJK `\b` 那種從設定當天就失效卻沒人發現的坑再次發生).

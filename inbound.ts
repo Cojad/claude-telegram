@@ -24,6 +24,24 @@ export function safeName(s: string | undefined): string | undefined {
   return s?.replace(/[<>\[\]\r\n;]/g, '_')
 }
 
+const REPLY_TEXT_MAX = 200
+
+// Telegram inlines the full replied-to Message object on a fresh reply (not
+// guaranteed for very old messages — Telegram may omit it, in which case
+// only reply_to_message_id would ever be available here; there is currently
+// nowhere else to look it up, see plan.html §05 for the SQLite follow-up).
+// Truncated because the replied-to message could be arbitrarily long and
+// this is meta, not the message being relayed.
+export function buildReplyMeta(replyTo: { message_id: number; text?: string; caption?: string } | undefined):
+  { reply_to_message_id?: string; reply_to_text?: string } {
+  if (!replyTo) return {}
+  const text = replyTo.text ?? replyTo.caption
+  return {
+    reply_to_message_id: String(replyTo.message_id),
+    ...(text != null ? { reply_to_text: text.length > REPLY_TEXT_MAX ? text.slice(0, REPLY_TEXT_MAX) + '…' : text } : {}),
+  }
+}
+
 // Permission-reply spec from anthropics/claude-cli-internal
 // src/services/mcp/channelPermissions.ts — inlined (no CC repo dep).
 // 5 lowercase letters a-z minus 'l'. Case-insensitive for phone autocorrect.
@@ -112,6 +130,7 @@ export function createHandleInbound(deps: InboundDeps) {
           user: from.username ?? String(from.id),
           user_id: String(from.id),
           ts: new Date((ctx.message?.date ?? 0) * 1000).toISOString(),
+          ...buildReplyMeta(ctx.message?.reply_to_message as { message_id: number; text?: string; caption?: string } | undefined),
           ...(imagePath ? { image_path: imagePath } : {}),
           ...(attachment ? {
             attachment_kind: attachment.kind,
