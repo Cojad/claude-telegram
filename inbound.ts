@@ -8,6 +8,7 @@ import type { Bot, Context } from 'grammy'
 import type { ReactionTypeEmoji } from 'grammy/types'
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import type { Access, GateResult } from './policy'
+import type { Store } from './store'
 
 export type AttachmentMeta = {
   kind: string
@@ -52,10 +53,12 @@ export interface InboundDeps {
   gate: (ctx: Context) => GateResult
   bot: Pick<Bot, 'api'>
   mcp: Pick<Server, 'notification'>
+  /** Every message this plugin sees is recorded here — delivered or not. */
+  store: Pick<Store, 'record'>
 }
 
 export function createHandleInbound(deps: InboundDeps) {
-  const { gate, bot, mcp } = deps
+  const { gate, bot, mcp, store } = deps
 
   return async function handleInbound(
     ctx: Context,
@@ -63,17 +66,52 @@ export function createHandleInbound(deps: InboundDeps) {
     downloadImage: (() => Promise<string | undefined>) | undefined,
     attachment?: AttachmentMeta,
   ): Promise<void> {
+    // Extracted before gate() runs so a dropped message can still be
+    // recorded — gate() itself returns 'drop' immediately when ctx.from is
+    // missing, so these have to stand on their own, defensively.
+    const chatIdForStore = ctx.chat ? String(ctx.chat.id) : undefined
+    const msgIdForStore = ctx.message?.message_id
+    const tsForStore = new Date((ctx.message?.date ?? 0) * 1000).toISOString()
+    const replyMeta = buildReplyMeta(
+      ctx.message?.reply_to_message as { message_id: number; text?: string; caption?: string } | undefined,
+    )
+    const recordSeen = (delivered: boolean): void => {
+      if (!chatIdForStore || msgIdForStore == null) return // nothing to index by
+      try {
+        store.record({
+          chat_id: chatIdForStore,
+          message_id: String(msgIdForStore),
+          direction: 'in',
+          ts: tsForStore,
+          user_id: ctx.from ? String(ctx.from.id) : undefined,
+          content: text,
+          reply_to_message_id: replyMeta.reply_to_message_id,
+          attachment_kind: attachment?.kind,
+          attachment_file_id: attachment?.file_id,
+          delivered,
+        })
+      } catch (err) {
+        process.stderr.write(`telegram channel: store.record (inbound) failed: ${err}\n`)
+      }
+    }
+
     const result = gate(ctx)
 
-    if (result.action === 'drop') return
+    if (result.action === 'drop') {
+      recordSeen(false)
+      return
+    }
 
     if (result.action === 'pair') {
+      recordSeen(false) // not yet paired — nothing was delivered to Claude
       const lead = result.isResend ? 'Still pending' : 'Pairing required'
       await ctx.reply(
         `${lead} — run in Claude Code:\n\n/telegram:access pair ${result.code}`,
       )
       return
     }
+
+    recordSeen(true)
 
     const access: Access = result.access
     const from = ctx.from!
@@ -129,8 +167,8 @@ export function createHandleInbound(deps: InboundDeps) {
           ...(msgId != null ? { message_id: String(msgId) } : {}),
           user: from.username ?? String(from.id),
           user_id: String(from.id),
-          ts: new Date((ctx.message?.date ?? 0) * 1000).toISOString(),
-          ...buildReplyMeta(ctx.message?.reply_to_message as { message_id: number; text?: string; caption?: string } | undefined),
+          ts: tsForStore,
+          ...replyMeta,
           ...(imagePath ? { image_path: imagePath } : {}),
           ...(attachment ? {
             attachment_kind: attachment.kind,

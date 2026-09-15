@@ -1,0 +1,100 @@
+// Purpose-driven tests for outbound.ts's store wiring and the new
+// lookup_message tool (plan.html §05). What matters here: a message this
+// plugin sends actually lands in the store under the id Telegram assigned
+// it (so a later reply_to_message_id resolves), an edit replaces rather
+// than duplicates, and lookup_message actually reads back what was
+// recorded — not just that store.ts itself works (that's store.test.ts).
+
+import { afterEach, expect, test } from 'bun:test'
+import { callTool, type OutboundDeps } from '../outbound'
+import { openStore, type Store } from '../store'
+
+const stores: Store[] = []
+function harness(): { deps: OutboundDeps; sentTexts: string[] } {
+  const store = openStore(':memory:')
+  stores.push(store)
+  const sentTexts: string[] = []
+  let nextMessageId = 1000
+  const bot = {
+    api: {
+      sendMessage: async (_chat_id: string, text: string) => {
+        sentTexts.push(text)
+        return { message_id: nextMessageId++ }
+      },
+      editMessageText: async (_chat_id: string, message_id: number, _text: string) => {
+        return { message_id }
+      },
+      setMessageReaction: async () => {},
+      getFile: async () => ({ file_path: undefined }),
+    },
+  } as never
+  const deps: OutboundDeps = {
+    bot,
+    token: 'test-token',
+    inboxDir: '/tmp/never-used-in-these-tests',
+    loadAccess: () => ({ dmPolicy: 'allowlist', allowFrom: ['1'], groups: {}, pending: {} }),
+    assertAllowedChat: (chat_id: string) => {
+      if (chat_id !== '1') throw new Error(`chat ${chat_id} is not allowlisted — add via /telegram:access`)
+    },
+    assertSendable: () => {},
+    store,
+  }
+  return { deps, sentTexts }
+}
+afterEach(() => { for (const s of stores.splice(0)) s.close() })
+
+test('reply records the sent message under the id Telegram returned', async () => {
+  const { deps } = harness()
+  const result = await callTool('reply', { chat_id: '1', text: 'hello world' }, deps)
+  expect(result.isError).toBeUndefined()
+  const sentId = result.content[0].text.match(/id: (\d+)/)![1]
+  const found = deps.store.lookup('1', sentId)
+  expect(found).toMatchObject({ chat_id: '1', message_id: sentId, direction: 'out', content: 'hello world', delivered: true })
+})
+
+test('reply with reply_to records reply_to_message_id on the recorded row', async () => {
+  const { deps } = harness()
+  const result = await callTool('reply', { chat_id: '1', text: 'an answer', reply_to: '55' }, deps)
+  const sentId = result.content[0].text.match(/id: (\d+)/)![1]
+  expect(deps.store.lookup('1', sentId)?.reply_to_message_id).toBe('55')
+})
+
+test('edit_message replaces the recorded content for that message_id, not a new row', async () => {
+  const { deps } = harness()
+  const first = await callTool('reply', { chat_id: '1', text: 'draft' }, deps)
+  const id = first.content[0].text.match(/id: (\d+)/)![1]
+  await callTool('edit_message', { chat_id: '1', message_id: id, text: 'final version' }, deps)
+  expect(deps.store.lookup('1', id)?.content).toBe('final version')
+  expect(deps.store.recent('1', 10)).toHaveLength(1)
+})
+
+test('lookup_message by message_id returns the recorded row as JSON', async () => {
+  const { deps } = harness()
+  const sent = await callTool('reply', { chat_id: '1', text: 'findable' }, deps)
+  const id = sent.content[0].text.match(/id: (\d+)/)![1]
+  const looked = await callTool('lookup_message', { chat_id: '1', message_id: id }, deps)
+  expect(JSON.parse(looked.content[0].text)).toMatchObject({ content: 'findable', message_id: id })
+})
+
+test('lookup_message for an id never seen returns "not found", not an error', async () => {
+  const { deps } = harness()
+  const looked = await callTool('lookup_message', { chat_id: '1', message_id: '99999' }, deps)
+  expect(looked.isError).toBeUndefined()
+  expect(looked.content[0].text).toBe('not found')
+})
+
+test('lookup_message with no message_id lists recent messages, newest first', async () => {
+  const { deps } = harness()
+  await callTool('reply', { chat_id: '1', text: 'first' }, deps)
+  await callTool('reply', { chat_id: '1', text: 'second' }, deps)
+  const looked = await callTool('lookup_message', { chat_id: '1', limit: '5' }, deps)
+  const rows = JSON.parse(looked.content[0].text)
+  expect(rows.map((r: { content: string }) => r.content)).toEqual(['second', 'first'])
+})
+
+test('lookup_message on a non-allowlisted chat_id is rejected the same as reply/react', async () => {
+  const { deps } = harness()
+  const looked = await callTool('lookup_message', { chat_id: '999999' }, deps)
+  expect(looked.isError).toBe(true)
+  expect(looked.content[0].text).toContain('not allowlisted')
+})

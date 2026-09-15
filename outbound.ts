@@ -10,6 +10,7 @@ import { mkdirSync, statSync, writeFileSync } from 'fs'
 import { extname, join } from 'path'
 import { chunk } from './format'
 import type { Access } from './policy'
+import type { Store } from './store'
 
 export const TOOL_DEFINITIONS = [
   {
@@ -81,6 +82,20 @@ export const TOOL_DEFINITIONS = [
       required: ['chat_id', 'message_id', 'text'],
     },
   },
+  {
+    name: 'lookup_message',
+    description: 'Look up messages this plugin has seen (sent or received) in a chat, from the local SQLite log — not the Telegram API, which has no history endpoint. Pass message_id for one exact message (e.g. to resolve a reply_to_message_id that had no reply_to_text), or omit it and use limit for the most recent messages in that chat. Includes messages gate() dropped (delivered: false) and nothing else about them.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        chat_id: { type: 'string' },
+        message_id: { type: 'string', description: 'Exact message to look up. Omit to list recent messages instead.' },
+        limit: { type: 'string', description: 'Max messages to return when message_id is omitted. Default 10, max 100.' },
+        before_message_id: { type: 'string', description: 'With limit: page to messages older than this one.' },
+      },
+      required: ['chat_id'],
+    },
+  },
 ] as const
 
 // .jpg/.jpeg/.png/.gif/.webp go as photos (Telegram compresses + shows inline);
@@ -100,10 +115,14 @@ export interface OutboundDeps {
   assertAllowedChat: (chat_id: string) => void
   /** Throws if a file path being sent as an attachment reaches into plugin state. */
   assertSendable: (path: string) => void
+  store: Pick<Store, 'record' | 'lookup' | 'recent'>
 }
 
+const DEFAULT_LOOKUP_LIMIT = 10
+const MAX_LOOKUP_LIMIT = 100
+
 export async function callTool(name: string, args: Record<string, unknown>, deps: OutboundDeps): Promise<ToolResult> {
-  const { bot, token, inboxDir, loadAccess, assertAllowedChat, assertSendable } = deps
+  const { bot, token, inboxDir, loadAccess, assertAllowedChat, assertSendable, store } = deps
   try {
     switch (name) {
       case 'reply': {
@@ -130,6 +149,17 @@ export async function callTool(name: string, args: Record<string, unknown>, deps
         const replyMode = access.replyToMode ?? 'first'
         const chunks = chunk(text, limit, mode)
         const sentIds: number[] = []
+        const recordSent = (message_id: number, content: string): void => {
+          try {
+            store.record({
+              chat_id, message_id: String(message_id), direction: 'out',
+              ts: new Date().toISOString(), content, delivered: true,
+              ...(reply_to != null ? { reply_to_message_id: String(reply_to) } : {}),
+            })
+          } catch (err) {
+            process.stderr.write(`telegram channel: store.record (outbound) failed: ${err}\n`)
+          }
+        }
 
         try {
           for (let i = 0; i < chunks.length; i++) {
@@ -142,6 +172,7 @@ export async function callTool(name: string, args: Record<string, unknown>, deps
               ...(parseMode ? { parse_mode: parseMode } : {}),
             })
             sentIds.push(sent.message_id)
+            recordSent(sent.message_id, chunks[i])
           }
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err)
@@ -161,9 +192,11 @@ export async function callTool(name: string, args: Record<string, unknown>, deps
           if (PHOTO_EXTS.has(ext)) {
             const sent = await bot.api.sendPhoto(chat_id, input, opts)
             sentIds.push(sent.message_id)
+            recordSent(sent.message_id, `(photo: ${f})`)
           } else {
             const sent = await bot.api.sendDocument(chat_id, input, opts)
             sentIds.push(sent.message_id)
+            recordSent(sent.message_id, `(document: ${f})`)
           }
         }
 
@@ -199,17 +232,37 @@ export async function callTool(name: string, args: Record<string, unknown>, deps
         return { content: [{ type: 'text', text: path }] }
       }
       case 'edit_message': {
-        assertAllowedChat(args.chat_id as string)
+        const chat_id = args.chat_id as string
+        assertAllowedChat(chat_id)
         const editFormat = (args.format as string | undefined) ?? 'text'
         const editParseMode = editFormat === 'markdownv2' ? 'MarkdownV2' as const : undefined
         const edited = await bot.api.editMessageText(
-          args.chat_id as string,
+          chat_id,
           Number(args.message_id),
           args.text as string,
           ...(editParseMode ? [{ parse_mode: editParseMode }] : []),
         )
-        const id = typeof edited === 'object' ? edited.message_id : args.message_id
+        const id = typeof edited === 'object' ? edited.message_id : Number(args.message_id)
+        // The edit replaces what this message_id means — INSERT OR REPLACE
+        // on the same (chat_id, message_id) is exactly "this is now current".
+        try {
+          store.record({ chat_id, message_id: String(id), direction: 'out', ts: new Date().toISOString(), content: args.text as string, delivered: true })
+        } catch (err) {
+          process.stderr.write(`telegram channel: store.record (edit) failed: ${err}\n`)
+        }
         return { content: [{ type: 'text', text: `edited (id: ${id})` }] }
+      }
+      case 'lookup_message': {
+        const chat_id = args.chat_id as string
+        assertAllowedChat(chat_id)
+        if (args.message_id != null) {
+          const found = store.lookup(chat_id, String(args.message_id))
+          return { content: [{ type: 'text', text: found ? JSON.stringify(found) : 'not found' }] }
+        }
+        const limit = Math.max(1, Math.min(Number(args.limit) || DEFAULT_LOOKUP_LIMIT, MAX_LOOKUP_LIMIT))
+        const beforeId = args.before_message_id != null ? String(args.before_message_id) : undefined
+        const rows = store.recent(chat_id, limit, beforeId)
+        return { content: [{ type: 'text', text: JSON.stringify(rows) }] }
       }
       default:
         return {

@@ -38,11 +38,17 @@ afterAll(async () => {
   rmSync(dir, { recursive: true, force: true })
 })
 
-test('tools/list returns exactly the four documented tools', async () => {
+test('tools/list returns exactly the five documented tools', async () => {
   const { tools } = await client.listTools()
   expect(tools.map(t => t.name).sort()).toEqual(
-    ['download_attachment', 'edit_message', 'react', 'reply'].sort(),
+    ['download_attachment', 'edit_message', 'lookup_message', 'react', 'reply'].sort(),
   )
+})
+
+test('tools/call lookup_message on a non-allowlisted chat_id is rejected too', async () => {
+  const result = await client.callTool({ name: 'lookup_message', arguments: { chat_id: '999999' } })
+  expect(result.isError).toBe(true)
+  expect(String((result.content as Array<{ text: string }>)[0].text)).toContain('not allowlisted')
 })
 
 test('tools/call routes through outbound.ts and surfaces assertAllowedChat as isError', async () => {
