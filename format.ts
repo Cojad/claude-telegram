@@ -73,7 +73,7 @@ function tsGmt8(iso: string): string {
 // record to exactly two physical lines, so a message boundary is always
 // "blank line, then a line starting with #", never ambiguous with a
 // multi-line body the way an indented rendering would be.
-export function formatMessageRow(r: MessageRecord): string {
+export function formatMessageRow(r: MessageRecord, opts?: { includeRaw?: boolean }): string {
   const dir = r.direction === 'in' ? 'in ' : 'out'
   const who = r.direction === 'out' ? 'bot' : (r.user_id ?? '?')
   const meta: string[] = []
@@ -82,12 +82,19 @@ export function formatMessageRow(r: MessageRecord): string {
   if (r.attachment_kind) {
     meta.push(r.attachment_file_id ? `📎${r.attachment_kind}:${r.attachment_file_id}` : `📎${r.attachment_kind}`)
   }
+  // Presence marker by default — the raw blob itself can be large (a whole
+  // GramJS Message object) and most messages don't have one at all, so
+  // dumping it into every row of a list would defeat the point of this
+  // compact format. Looking up one exact message_id (outbound.ts) passes
+  // includeRaw so that specific, deliberate query gets the full thing.
+  if (r.raw) meta.push('raw')
   const header = `#${r.message_id} ${dir} ${tsGmt8(r.ts)} ${who}${meta.length ? '  [' + meta.join(', ') + ']' : ''}`
   const body = r.content
-  return body ? `${header}\n${body.replace(/\n/g, '\\n')}` : header
+  const main = body ? `${header}\n${body.replace(/\n/g, '\\n')}` : header
+  return opts?.includeRaw && r.raw ? `${main}\nraw: ${r.raw}` : main
 }
 
 export function formatMessageRows(rows: MessageRecord[]): string {
   if (rows.length === 0) return '(no messages)'
-  return rows.map(formatMessageRow).join('\n\n')
+  return rows.map(r => formatMessageRow(r)).join('\n\n')
 }

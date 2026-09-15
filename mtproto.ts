@@ -104,6 +104,36 @@ export interface MtprotoMessageInput {
   entities?: RawMtprotoEntity[]
   replyTo?: { messageId: number; text?: string; fromId?: string }
   sendReply: (text: string) => Promise<unknown>
+  /** Pre-serialized raw source data, already JSON-safe — see safeStringify()
+   *  below. Passed straight through to store.ts for later analysis. */
+  raw?: string
+}
+
+// GramJS's Api.Message can hold fields backed by the `big-integer` package
+// (senderId, etc.) and Node Buffers. Checked directly rather than assumed:
+// both already carry their own toJSON() (big-integer's returns a string,
+// Buffer's returns {type:"Buffer",data:[...]}), which JSON.stringify calls
+// before this replacer ever sees the value — so neither needs special-
+// casing here, only genuine primitive `bigint` does (it has no toJSON and
+// JSON.stringify throws "cannot serialize BigInt" on it directly). This is
+// purely a debugging aid (raw="Rich Message" parsing gaps, 2026-09-15) —
+// never let a serialization failure here take down actual message
+// processing, so failures fall back to a short marker string instead of
+// throwing.
+export function safeStringify(value: unknown): string {
+  const seen = new WeakSet<object>()
+  try {
+    return JSON.stringify(value, (_key, v) => {
+      if (typeof v === 'bigint') return v.toString()
+      if (v && typeof v === 'object') {
+        if (seen.has(v)) return '[circular]'
+        seen.add(v)
+      }
+      return v
+    }) ?? 'null'
+  } catch (err) {
+    return `[unserializable: ${err instanceof Error ? err.message : String(err)}]`
+  }
 }
 
 // Pure: no GramJS types, no network, no store — just "given this data,
@@ -121,6 +151,7 @@ export function buildMtprotoContext(input: MtprotoMessageInput): HandleInboundCo
     from: { id: input.senderId, username: input.senderUsername },
     chat: { id: input.chatId, type: input.chatType },
     mtproto: true,
+    raw: input.raw,
     message: {
       message_id: input.messageId,
       date: input.date,
@@ -199,6 +230,7 @@ export function createMtprotoListener(deps: MtprotoDeps) {
           ? { messageId: replyToMessage.id, text: replyToMessage.message || undefined, fromId: replySenderId?.toString() }
           : undefined,
         sendReply: (text: string) => client.sendMessage(chatId, { message: text }),
+        raw: safeStringify(message),
       })
 
       await handleInbound(ctx, ctx.message?.text ?? '', undefined)

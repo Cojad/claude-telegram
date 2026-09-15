@@ -28,6 +28,13 @@ export interface MessageRecord {
   attachment_file_id?: string
   /** Whether gate() actually delivered this to Claude. Always true for direction 'out'. */
   delivered: boolean
+  /** Raw, mostly-unparsed source data — currently only populated by
+   *  mtproto.ts, for debugging cases like "Rich Message" where the parsed
+   *  `content` came back empty/wrong but the underlying event carried more
+   *  than what buildMtprotoContext() currently extracts. JSON string;
+   *  shape depends entirely on which transport produced it, no fixed
+   *  schema. Cojad, 2026-09-15. */
+  raw?: string
 }
 
 // What SQLite hands back from a row — integers for the boolean, undefined
@@ -44,6 +51,7 @@ interface MessageRow {
   attachment_kind: string | null
   attachment_file_id: string | null
   delivered: number
+  raw: string | null
 }
 
 function toRecord(row: MessageRow): MessageRecord {
@@ -58,6 +66,7 @@ function toRecord(row: MessageRow): MessageRecord {
     attachment_kind: row.attachment_kind ?? undefined,
     attachment_file_id: row.attachment_file_id ?? undefined,
     delivered: row.delivered === 1,
+    raw: row.raw ?? undefined,
   }
 }
 
@@ -90,12 +99,20 @@ export function openStore(dbPath: string): Store {
     )
   `)
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_chat_msg ON messages(chat_id, message_id)')
+  // Migration for databases created before the `raw` column existed —
+  // SQLite has no "ADD COLUMN IF NOT EXISTS", so this just tries and
+  // swallows the "duplicate column" error on every boot after the first.
+  try {
+    db.exec('ALTER TABLE messages ADD COLUMN raw TEXT')
+  } catch (err) {
+    if (!(err instanceof Error) || !/duplicate column/i.test(err.message)) throw err
+  }
 
   const insertStmt = db.prepare(`
     INSERT OR REPLACE INTO messages
-      (chat_id, message_id, direction, ts, user_id, content, reply_to_message_id, attachment_kind, attachment_file_id, delivered)
+      (chat_id, message_id, direction, ts, user_id, content, reply_to_message_id, attachment_kind, attachment_file_id, delivered, raw)
     VALUES
-      ($chat_id, $message_id, $direction, $ts, $user_id, $content, $reply_to_message_id, $attachment_kind, $attachment_file_id, $delivered)
+      ($chat_id, $message_id, $direction, $ts, $user_id, $content, $reply_to_message_id, $attachment_kind, $attachment_file_id, $delivered, $raw)
   `)
   const lookupStmt = db.prepare('SELECT * FROM messages WHERE chat_id = $chat_id AND message_id = $message_id')
   const recentStmt = db.prepare('SELECT * FROM messages WHERE chat_id = $chat_id ORDER BY id DESC LIMIT $limit')
@@ -119,6 +136,7 @@ export function openStore(dbPath: string): Store {
         $attachment_kind: r.attachment_kind ?? null,
         $attachment_file_id: r.attachment_file_id ?? null,
         $delivered: r.delivered ? 1 : 0,
+        $raw: r.raw ?? null,
       })
     },
     lookup(chat_id, message_id) {

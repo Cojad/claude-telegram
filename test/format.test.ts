@@ -121,3 +121,21 @@ test('formatMessageRows preserves caller-given order (newest-first is the caller
   const text = formatMessageRows([rec({ message_id: '2', content: 'second' }), rec({ message_id: '1', content: 'first' })])
   expect(text.indexOf('second')).toBeLessThan(text.indexOf('first'))
 })
+
+test('formatMessageRow flags raw presence but does not dump it by default', () => {
+  const withRaw = formatMessageRow(rec({ raw: '{"className":"Message","id":1}' }))
+  const withoutRaw = formatMessageRow(rec())
+  expect(withRaw).toContain('raw')
+  expect(withRaw).not.toContain('className') // the marker, not the blob
+  expect(withoutRaw).not.toContain('raw')
+})
+
+test('formatMessageRow with includeRaw: true appends the full raw blob on its own line', () => {
+  const text = formatMessageRow(rec({ raw: '{"className":"Message","id":1}' }), { includeRaw: true })
+  expect(text).toContain('raw: {"className":"Message","id":1}')
+})
+
+test('formatMessageRow with includeRaw: true but no raw present adds nothing extra', () => {
+  const text = formatMessageRow(rec(), { includeRaw: true })
+  expect(text).not.toContain('raw:')
+})

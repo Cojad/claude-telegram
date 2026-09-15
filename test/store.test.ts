@@ -90,3 +90,11 @@ test('an outbound (direction: out) record round-trips the same as inbound', () =
   store.record(rec({ direction: 'out', message_id: '7', content: 'sent by the bot' }))
   expect(store.lookup('-100', '7')?.direction).toBe('out')
 })
+
+test('raw round-trips when present, stays undefined (not "null") when absent', () => {
+  const store = freshStore()
+  store.record(rec({ message_id: '8', raw: '{"className":"Message","id":8}' }))
+  store.record(rec({ message_id: '9' }))
+  expect(store.lookup('-100', '8')?.raw).toBe('{"className":"Message","id":8}')
+  expect(store.lookup('-100', '9')?.raw).toBeUndefined()
+})

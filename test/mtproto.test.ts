@@ -10,7 +10,7 @@ import { expect, test } from 'bun:test'
 import { mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { buildMtprotoContext, loadSessionString, mapEntityClassName } from '../mtproto'
+import { buildMtprotoContext, loadSessionString, mapEntityClassName, safeStringify } from '../mtproto'
 
 test('mapEntityClassName: recognizes the two entity kinds isMentioned() checks', () => {
   expect(mapEntityClassName('MessageEntityMention')).toBe('mention')
@@ -89,4 +89,57 @@ test('buildMtprotoContext: reply() forwards to whatever sendReply the caller sup
   })
   await ctx.reply('pairing required')
   expect(calls).toEqual(['pairing required'])
+})
+
+test('buildMtprotoContext: passes raw through untouched when the caller supplied one', () => {
+  const ctx = buildMtprotoContext({
+    senderId: '1', chatId: '1', chatType: 'group', messageId: 1, date: 0,
+    text: 'hi', sendReply: async () => undefined, raw: '{"className":"Message"}',
+  })
+  expect(ctx.raw).toBe('{"className":"Message"}')
+})
+
+test('buildMtprotoContext: raw stays undefined (not present at all) when the caller supplied none', () => {
+  const ctx = buildMtprotoContext({
+    senderId: '1', chatId: '1', chatType: 'group', messageId: 1, date: 0,
+    text: 'hi', sendReply: async () => undefined,
+  })
+  expect(ctx.raw).toBeUndefined()
+})
+
+// safeStringify — the debugging aid behind `raw`. Purpose: never let a
+// GramJS-specific value (BigInteger, Buffer, a circular ref) throw or
+// produce garbage; degrade to a short marker instead of losing the message.
+
+test('safeStringify: plain data serializes exactly like JSON.stringify', () => {
+  expect(safeStringify({ a: 1, b: 'two', c: [3, 4] })).toBe(JSON.stringify({ a: 1, b: 'two', c: [3, 4] }))
+})
+
+test('safeStringify: an object with its own toJSON() (how big-integer and Buffer both behave) serializes via that, not [object Object]', () => {
+  // Verified against the real `big-integer` package before writing this:
+  // its instances have a toJSON() returning a string, and JSON.stringify
+  // calls that before this function's replacer ever sees the value — so
+  // this is standard JSON.stringify behavior, not something safeStringify
+  // does itself, but it's the actual mechanism senderId/chatId rely on and
+  // is worth pinning so a future "simplification" doesn't reintroduce
+  // custom constructor-name detection for something that already works.
+  class HasOwnToJSON {
+    constructor(private n: string) {}
+    toJSON() { return this.n }
+  }
+  const result = safeStringify({ senderId: new HasOwnToJSON('133770478') })
+  expect(result).toBe('{"senderId":"133770478"}')
+})
+
+test('safeStringify: a circular reference degrades to a marker instead of throwing', () => {
+  const obj: Record<string, unknown> = { name: 'msg' }
+  obj.self = obj
+  expect(() => safeStringify(obj)).not.toThrow()
+  expect(safeStringify(obj)).toContain('[circular]')
+})
+
+test('safeStringify: never throws even on a genuinely unserializable value', () => {
+  const withBigint = { n: 10n }
+  expect(() => safeStringify(withBigint)).not.toThrow()
+  expect(safeStringify(withBigint)).toBe('{"n":"10"}')
 })

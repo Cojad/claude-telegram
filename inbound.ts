@@ -132,6 +132,7 @@ export function createHandleInbound(deps: InboundDeps) {
           attachment_kind: attachment?.kind,
           attachment_file_id: attachment?.file_id,
           delivered,
+          raw: ctx.raw,
         })
       } catch (err) {
         process.stderr.write(`telegram channel: store.record (inbound) failed: ${err}\n`)

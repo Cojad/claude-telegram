@@ -26,6 +26,9 @@ export type InboundContext = {
    *  Communication Mode means the Bot API sees other bots' messages too,
    *  not just this listener). Cojad, 2026-09-15. */
   mtproto?: boolean
+  /** Raw, mostly-unparsed source data for this message, when the transport
+   *  that received it captured one — see store.ts's MessageRecord.raw. */
+  raw?: string
   message?: {
     message_id?: number
     date?: number
