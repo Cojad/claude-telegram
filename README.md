@@ -104,13 +104,15 @@ platform-level, permanent, and unrelated to privacy mode or admin rights (see th
 [Bots FAQ](https://core.telegram.org/bots/faq)). If another bot in the group needs to reach this
 one, the Bot API path in this plugin structurally cannot see it, no matter how access is configured.
 
-Setting both `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` in `.env` (application credentials from
-[my.telegram.org](https://my.telegram.org), a different kind of secret than the bot token) turns
-on a second, independent listener over MTProto (via [GramJS](https://www.npmjs.com/package/telegram))
-that runs alongside the normal Bot API poller. It only ever forwards messages whose sender is
-itself a bot — human messages are already handled reliably by the Bot API path, so this never
-duplicates or races it — and feeds them into the exact same access-control and notification
-pipeline as everything else. Leave both unset and nothing changes; this is fully opt-in.
+Setting `TELEGRAM_MTPROTO_ENABLED=1` in `.env` turns on a second, independent listener over MTProto
+(via [GramJS](https://www.npmjs.com/package/telegram)) that runs alongside the normal Bot API poller.
+It logs in with the same bot token, using Telegram Desktop's own publicly-known api_id/api_hash
+(see the comment in `mtproto.ts` for exactly why, and the trade-off) rather than a credential tied
+to this deployment — nothing account-specific needs to live in `.env` or this repo for this feature.
+It only ever forwards messages whose sender is itself a bot — human messages are already handled
+reliably by the Bot API path, so this never duplicates or races it — and feeds them into the exact
+same access-control and notification pipeline as everything else. Leave the flag unset and nothing
+changes; this is fully opt-in.
 
 ## Live progress via hooks (companion pattern)
 

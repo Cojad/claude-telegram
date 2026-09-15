@@ -42,9 +42,26 @@ import type { HandleInboundContext } from './inbound'
 import type { InboundEntity } from './policy'
 import type { Store } from './store'
 
+// Telegram Desktop's own api_id/api_hash — NOT this deployment's secret,
+// a widely-known, publicly reverse-engineered pair shared by the official
+// Windows/macOS/Linux client itself (see telegramdesktop/tdesktop and the
+// many open-source Telegram tools — Telethon's own docs among them — that
+// use this exact pair for the same reason: MTProto requires *an*
+// application identity to log in, but this listener isn't "an app" in any
+// meaningful sense, it's this bot account reading its own group's traffic
+// over a different transport). Cojad, 2026-09-15: explicitly chose this
+// over registering and hardcoding a personal my.telegram.org app pair,
+// specifically so nothing account-specific ever needs to live in this
+// public repo. Trade-off, stated plainly: Telegram's own official docs
+// (tdesktop/docs/api_credentials.md) warn that using shared/reused
+// api_id/api_hash pairs outside their originally-issued client risks
+// rate-limit or enforcement action from Telegram — this pair is reused
+// this way by enough of the ecosystem that it works in practice, but it
+// is not officially sanctioned for that use.
+const TELEGRAM_DESKTOP_API_ID = 2040
+const TELEGRAM_DESKTOP_API_HASH = 'b18441a1ff607e10a989891a5462e627'
+
 export interface MtprotoDeps {
-  apiId: number
-  apiHash: string
   botToken: string
   sessionFile: string
   store: Pick<Store, 'lookup'>
@@ -120,10 +137,13 @@ export function buildMtprotoContext(input: MtprotoMessageInput): HandleInboundCo
 }
 
 export function createMtprotoListener(deps: MtprotoDeps) {
-  const { apiId, apiHash, botToken, sessionFile, store, handleInbound } = deps
-  const client = new TelegramClient(new StringSession(loadSessionString(sessionFile)), apiId, apiHash, {
-    connectionRetries: 5,
-  })
+  const { botToken, sessionFile, store, handleInbound } = deps
+  const client = new TelegramClient(
+    new StringSession(loadSessionString(sessionFile)),
+    TELEGRAM_DESKTOP_API_ID,
+    TELEGRAM_DESKTOP_API_HASH,
+    { connectionRetries: 5 },
+  )
 
   async function onEvent(event: NewMessageEvent): Promise<void> {
     try {

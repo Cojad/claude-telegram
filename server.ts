@@ -290,19 +290,16 @@ bot.catch(err => {
 })
 
 // Optional supplementary channel: sees messages from OTHER bots, which the
-// Bot API path above structurally cannot (see mtproto.ts's header comment).
-// Opt-in only — TELEGRAM_API_ID/TELEGRAM_API_HASH are "application"
-// credentials (from my.telegram.org), a different kind of secret than the
-// bot token, and most deployments of this plugin have no reason to want
-// this. Absent either var, this whole block is skipped; existing
-// deployments are unaffected.
-const API_ID = process.env.TELEGRAM_API_ID
-const API_HASH = process.env.TELEGRAM_API_HASH
+// Bot API path above structurally cannot (see mtproto.ts's header comment,
+// including why the api_id/api_hash it uses is a publicly-known shared
+// pair, not a secret belonging to this deployment). Still opt-in — most
+// deployments of this plugin have no reason to want a second, independent
+// Telegram connection running — via TELEGRAM_MTPROTO_ENABLED, a plain
+// on/off flag, not a credential. Unset by default; existing deployments
+// are unaffected.
 let mtproto: ReturnType<typeof createMtprotoListener> | undefined
-if (API_ID && API_HASH) {
+if (process.env.TELEGRAM_MTPROTO_ENABLED === '1') {
   mtproto = createMtprotoListener({
-    apiId: Number(API_ID),
-    apiHash: API_HASH,
     botToken: TOKEN,
     sessionFile: join(STATE_DIR, 'mtproto.session'),
     store,
