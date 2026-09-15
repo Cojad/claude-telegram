@@ -204,12 +204,16 @@ export function createMtprotoListener(deps: MtprotoDeps) {
   }
 
   async function start(): Promise<void> {
+    // Found live (2026-09-15): GramJS's _authFlow branches on
+    // `"phoneNumber" in authParams` — merely having that KEY present (even
+    // as a callback that returns '') routes into the USER phone-login flow
+    // (signInUser) instead of the bot flow (signInBot), which is why the
+    // first production run threw PHONE_NUMBER_INVALID from auth.SendCode
+    // and every message from another bot silently never arrived (the
+    // client was never actually authorized). Bot-token login wants
+    // *exactly* botAuthToken + onError, nothing else in this object.
     await client.start({
       botAuthToken: botToken,
-      // bot-token login never prompts, but the API requires these:
-      phoneNumber: async () => '',
-      password: async () => '',
-      phoneCode: async () => '',
       onError: err => process.stderr.write(`telegram channel (mtproto): auth error: ${err}\n`),
     })
     const sessionString = client.session.save() as unknown as string
