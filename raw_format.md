@@ -150,4 +150,6 @@ some message
 5. 加 `store.ts` (SQLite) 與 `lookup_message` 工具 (Stage D, 本文件第三, 五節): 進出雙向訊息都記錄, 含被丟棄的, `(chat_id, message_id)` 唯一索引
 6. `reply_to_text` 缺席時自動查 store 補齊 (Stage E, 本文件第三節). plan.html §06 的四個階段到此全部完成.
 
-目前 `bun test` 55 條全過. 尚未實作 (不在原本四階段之內, 見 plan.html §03 的 TODO): 讓 inbound 不必只認得 Claude Code 的可插拔 sink 介面, 以及讓自訂的 `mentionPatterns` regex 在設定時就能被驗證 (避免像 CJK `\b` 那種從設定當天就失效卻沒人發現的坑再次發生).
+目前 `bun test` 105 條全過(持續增加中, 不要照這個數字更新, 以實際跑出來的為準). 尚未實作 (不在原本四階段之內, 見 plan.html §03 的 TODO): 讓 inbound 不必只認得 Claude Code 的可插拔 sink 介面, 以及讓自訂的 `mentionPatterns` regex 在設定時就能被驗證 (避免像 CJK `\b` 那種從設定當天就失效卻沒人發現的坑再次發生).
+
+2026-09-16: CJK `\b` 那個坑本身(`^cc\b` 對 "cc，" 這種後面接全形標點的情況判斷失效)已經在 access.json 裡把 `mentionPatterns` 從 `["^柯柯", "^cc\\b"]` 改成 `["柯柯", "cc"]` 解決(柯姊指示: 不再要求開頭或邊界, 只要文字裡出現這兩個字串就算 mention, 換成更寬鬆但可靠的判斷). 但「設定時驗證 regex」這個系統性的 TODO 本身還沒做, 之後如果又設定了帶 `\b` 的 pattern, 一樣會複製這個坑.
