@@ -457,12 +457,12 @@
           <span class="risk done">已完成 · 31 條測試全過</span>
         </div>
       </div>
-      <div class="phase">
+      <div class="phase done">
         <div class="pnum">3</div>
         <div>
-          <h3>store 模組 + 雙向寫入 + lookup_message 工具</h3>
-          <p>工程量最大的一塊. 建議先只記錄不查詢上線觀察幾天, 確定寫入不影響 inbound 延遲, 再開放 lookup_message 工具給 Claude 用.</p>
-          <span class="risk">風險中 · 新增依賴新資料表</span>
+          <h3>store 模組 + 雙向寫入 + lookup_message 工具 — 完成</h3>
+          <p>實際執行時沒有照原訂「先只記錄觀察幾天再開放查詢」的保守分階段, 記錄跟 lookup_message 一次做完, 一併補了 15 條測試 (store 8 條 + outbound 7 條). 這是刻意的取捨: 因為這個 fork 目前只在本機跑測試, 還沒部署到正式 channel, 沒有「先觀察線上延遲」這個中間狀態可以驗證, 等真的要部署時再回頭視情況決定要不要分階段上線.</p>
+          <span class="risk done">已完成 · 51 條測試全過</span>
         </div>
       </div>
       <div class="phase">
