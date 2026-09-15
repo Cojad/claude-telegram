@@ -78,7 +78,7 @@ here is my answer
 | `reply_to_message_id` | 這則是回覆某一則舊訊息時, 被回覆那則的 message_id |
 | `reply_to_text` | 被回覆那則的文字或 caption, 超過 200 字元會截斷並加 `…`. 純貼圖/無文字的訊息會有 id 沒有這個欄位 |
 
-**已知限制 (部分解決):** Telegram 只在**該則訊息夠新**時才會把完整的 reply_to_message 物件內附在更新裡; 太舊的訊息可能只給得到 (或完全給不到) 這個資訊, 這種情況下 `reply_to_text` 就會缺席. 第四節提到的 SQLite 訊息紀錄現在已經存在, Claude 可以自己呼叫 `lookup_message` 工具, 帶 chat_id 跟那個 reply_to_message_id, 手動查回原文 (只要那則訊息本身有被這支 plugin 記錄過, 不論當初有沒有送達). 還沒做的是**自動化**: `handleInbound` 目前不會在 `reply_to_text` 缺席時自動去查資料庫補上, 這部分是 plan.html §06 phase 4, 仍待實作.
+**已知限制 (已解決, 有備援):** Telegram 只在**該則訊息夠新**, 或原本就有文字/caption 時, 才會在更新裡給得到 `reply_to_text`. `handleInbound` 現在會自動補位: 只要有 `reply_to_message_id` 卻沒有 `reply_to_text`, 就自動去 `store.lookup()` 查本機紀錄, 查到就補上. 唯一還是會缺席的情況是那則被回覆的訊息**從沒被這支 plugin 經手過** (太早, 在這支 plugin 開始記錄之前), 這時 Claude 還是可以手動呼叫 `lookup_message` 試試看 (行為跟自動補位查的是同一份資料, 只是再查一次通常也不會查到更多), 但已經沒有更好的資料來源了.
 
 邏輯在 `inbound.ts` 的 `buildReplyMeta()`, 純函式, 見 `test/inbound.test.ts`.
 
@@ -116,12 +116,11 @@ here is my answer
 
 - **Telegram message entities** (如 @mention, hashtag, url 等結構化標註) 本身不會轉發, 只在 server 端內部用來判斷點名, 不出現在 Claude 收到的 meta 裡.
 - **Telegram 官方的完整群組歷史**: Bot API 本身就不提供群組歷史查詢, plugin 也沒有另外去抓. `lookup_message` 只看得到**這支 plugin 自己在線期間經手過**的訊息 (進或出, 含被丟棄的), 不是這個群組從創立以來的完整記錄, 也不會補回這支 plugin 上線之前的舊訊息.
-- **太舊訊息的 reply_to_text 自動補齊**: 見上面第三節, 現在要手動呼叫 `lookup_message`, 還沒自動化.
-
-以下兩項已解決, 記錄於此當作歷史對照:
+以下三項已解決, 記錄於此當作歷史對照:
 
 - ~~被回覆訊息的任何資訊~~ → Stage C (見第三節), `buildReplyMeta()` 已補上.
 - ~~被 gate() 丟棄的訊息完全不留紀錄~~ → Stage D, `inbound.ts` 現在把每一則看到的訊息都寫進 `store.ts` (SQLite), 包含 `delivered: false` 的丟棄紀錄, 可以用 `lookup_message` 查. 唯一還是查不到的是**這支 plugin 根本沒跑起來的那段時間** (例如重啟空窗), 那段時間的訊息 Telegram 端本身就不會補送.
+- ~~太舊訊息的 reply_to_text 要手動查~~ → Stage E, `handleInbound` 現在自動查, 見上面第三節.
 
 ## 六, 與此 repo 的關係
 
@@ -132,5 +131,6 @@ here is my answer
 3. 模組化: 拆成 policy / format / poller / outbound / transport / inbound 六個檔案, 每步都補了對應測試
 4. 加 `reply_to_message_id` / `reply_to_text` (Stage C, 本文件第三節)
 5. 加 `store.ts` (SQLite) 與 `lookup_message` 工具 (Stage D, 本文件第三, 五節): 進出雙向訊息都記錄, 含被丟棄的, `(chat_id, message_id)` 唯一索引
+6. `reply_to_text` 缺席時自動查 store 補齊 (Stage E, 本文件第三節). plan.html §06 的四個階段到此全部完成.
 
-目前 `bun test` 51 條全過. 尚未實作: 讓 `reply_to_text` 缺席時自動查 store 補齊 (plan.html §06 phase 4), §03 的可插拔 inbound sink (讓別的 harness 也能接), 以及讓自訂的 `mentionPatterns` regex 在設定時就能被驗證 (避免像 CJK `\b` 那種從設定當天就失效卻沒人發現的坑再次發生).
+目前 `bun test` 55 條全過. 尚未實作 (不在原本四階段之內, 見 plan.html §03 的 TODO): 讓 inbound 不必只認得 Claude Code 的可插拔 sink 介面, 以及讓自訂的 `mentionPatterns` regex 在設定時就能被驗證 (避免像 CJK `\b` 那種從設定當天就失效卻沒人發現的坑再次發生).

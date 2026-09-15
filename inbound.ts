@@ -53,8 +53,9 @@ export interface InboundDeps {
   gate: (ctx: Context) => GateResult
   bot: Pick<Bot, 'api'>
   mcp: Pick<Server, 'notification'>
-  /** Every message this plugin sees is recorded here — delivered or not. */
-  store: Pick<Store, 'record'>
+  /** Every message this plugin sees is recorded here (delivered or not), and
+   *  looked up to fill in reply_to_text when Telegram doesn't inline it. */
+  store: Pick<Store, 'record' | 'lookup'>
 }
 
 export function createHandleInbound(deps: InboundDeps) {
@@ -72,7 +73,7 @@ export function createHandleInbound(deps: InboundDeps) {
     const chatIdForStore = ctx.chat ? String(ctx.chat.id) : undefined
     const msgIdForStore = ctx.message?.message_id
     const tsForStore = new Date((ctx.message?.date ?? 0) * 1000).toISOString()
-    const replyMeta = buildReplyMeta(
+    let replyMeta = buildReplyMeta(
       ctx.message?.reply_to_message as { message_id: number; text?: string; caption?: string } | undefined,
     )
     const recordSeen = (delivered: boolean): void => {
@@ -112,6 +113,19 @@ export function createHandleInbound(deps: InboundDeps) {
     }
 
     recordSeen(true)
+
+    // Telegram didn't inline the replied-to message's text (old message, or
+    // it had none to begin with — a caption-less photo, say). Fall back to
+    // our own log: if that message passed through this plugin before,
+    // whichever direction, we already have its content.
+    if (replyMeta.reply_to_message_id && !replyMeta.reply_to_text && chatIdForStore) {
+      try {
+        const found = store.lookup(chatIdForStore, replyMeta.reply_to_message_id)
+        if (found?.content) replyMeta = { ...replyMeta, reply_to_text: found.content }
+      } catch (err) {
+        process.stderr.write(`telegram channel: store.lookup (reply fallback) failed: ${err}\n`)
+      }
+    }
 
     const access: Access = result.access
     const from = ctx.from!

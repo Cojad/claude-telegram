@@ -52,14 +52,17 @@ interface Harness {
   recorded: MessageRecord[]
 }
 
-function harness(gateResult: GateResult): Harness {
+function harness(gateResult: GateResult, seeded: Record<string, MessageRecord> = {}): Harness {
   const notifications: Array<{ method: string; params: Record<string, unknown> }> = []
   const recorded: MessageRecord[] = []
   const deps: InboundDeps = {
     gate: () => gateResult,
     bot: { api: { sendChatAction: async () => {}, setMessageReaction: async () => {} } } as never,
     mcp: { notification: async (n: unknown) => { notifications.push(n as never); return undefined } } as never,
-    store: { record: (r: MessageRecord) => { recorded.push(r) } },
+    store: {
+      record: (r: MessageRecord) => { recorded.push(r) },
+      lookup: (chat_id: string, message_id: string) => seeded[`${chat_id}:${message_id}`] ?? null,
+    },
   }
   return { handleInbound: createHandleInbound(deps), notifications, recorded }
 }
@@ -141,11 +144,71 @@ test('a store.record failure never blocks message delivery to Claude', async () 
     gate: () => ({ action: 'deliver', access: accessAllowingEveryone() }),
     bot: { api: { sendChatAction: async () => {}, setMessageReaction: async () => {} } } as never,
     mcp: { notification: async (n: unknown) => { notifications.push(n as never); return undefined } } as never,
-    store: { record: () => { throw new Error('disk full') } },
+    store: { record: () => { throw new Error('disk full') }, lookup: () => null },
   })
   const ctx = ctxFor({ message_id: 300, text: 'still gets through' })
 
   await handleInbound(ctx, 'still gets through', undefined)
 
   expect(notifications).toHaveLength(1) // store blowing up didn't swallow the real delivery
+})
+
+// ---- reply_to_text fallback to the store (plan.html §06 phase 4) --------
+
+test('reply_to_text falls back to the store when Telegram omits it (e.g. replying to a caption-less photo)', async () => {
+  const { handleInbound, notifications } = harness(
+    { action: 'deliver', access: accessAllowingEveryone() },
+    { '1:55': { chat_id: '1', message_id: '55', direction: 'in', ts: '2026-01-01T00:00:00.000Z', content: 'from the store', delivered: true } },
+  )
+  // reply_to_message has an id but no text/caption — the exact shape Telegram
+  // sends for a reply to a photo with no caption.
+  const ctx = ctxFor({ message_id: 100, reply_to_message: { message_id: 55 } })
+
+  await handleInbound(ctx, 'my answer', undefined)
+
+  const meta = notifications[0].params.meta as Record<string, unknown>
+  expect(meta.reply_to_message_id).toBe('55')
+  expect(meta.reply_to_text).toBe('from the store')
+})
+
+test('reply_to_text stays absent when neither Telegram nor the store has it — no crash', async () => {
+  const { handleInbound, notifications } = harness({ action: 'deliver', access: accessAllowingEveryone() })
+  const ctx = ctxFor({ message_id: 101, reply_to_message: { message_id: 999 } }) // never recorded
+
+  await handleInbound(ctx, 'my answer', undefined)
+
+  const meta = notifications[0].params.meta as Record<string, unknown>
+  expect(meta.reply_to_message_id).toBe('999')
+  expect('reply_to_text' in meta).toBe(false)
+})
+
+test('Telegram-inlined reply_to_text is used as-is, without ever consulting the store', async () => {
+  let lookupCalls = 0
+  const deps: InboundDeps = {
+    gate: () => ({ action: 'deliver', access: accessAllowingEveryone() }),
+    bot: { api: { sendChatAction: async () => {}, setMessageReaction: async () => {} } } as never,
+    mcp: { notification: async () => undefined } as never,
+    store: { record: () => {}, lookup: () => { lookupCalls++; return null } },
+  }
+  const handleInbound = createHandleInbound(deps)
+  const ctx = ctxFor({ message_id: 102, reply_to_message: { message_id: 55, text: 'already inlined' } })
+
+  await handleInbound(ctx, 'my answer', undefined)
+
+  expect(lookupCalls).toBe(0)
+})
+
+test('a store.lookup failure during the reply fallback never blocks delivery', async () => {
+  const notifications: Array<{ method: string; params: Record<string, unknown> }> = []
+  const handleInbound = createHandleInbound({
+    gate: () => ({ action: 'deliver', access: accessAllowingEveryone() }),
+    bot: { api: { sendChatAction: async () => {}, setMessageReaction: async () => {} } } as never,
+    mcp: { notification: async (n: unknown) => { notifications.push(n as never); return undefined } } as never,
+    store: { record: () => {}, lookup: () => { throw new Error('db locked') } },
+  })
+  const ctx = ctxFor({ message_id: 103, reply_to_message: { message_id: 55 } })
+
+  await handleInbound(ctx, 'my answer', undefined)
+
+  expect(notifications).toHaveLength(1)
 })
