@@ -68,7 +68,7 @@ cc 請你用raw format給我, 你收到的meta跟content整包長甚麼樣子就
 ## 三, 回覆訊息時多出來的屬性 (此 fork 新增, 尚未部署到正式 channel)
 
 ```xml
-<channel source="plugin:telegram:telegram" chat_id="-1004427695342" message_id="100" user="Cojad" user_id="137438526" ts="2026-09-15T04:10:00.000Z" reply_to_message_id="55" reply_to_text="earlier question">
+<channel source="plugin:telegram:telegram" chat_id="-1004427695342" message_id="100" user="Cojad" user_id="137438526" ts="2026-09-15T04:10:00.000Z" reply_to_message_id="55" reply_to_text="earlier question" reply_to_user_id="137438526">
 here is my answer
 </channel>
 ```
@@ -77,6 +77,7 @@ here is my answer
 |---|---|
 | `reply_to_message_id` | 這則是回覆某一則舊訊息時, 被回覆那則的 message_id |
 | `reply_to_text` | 被回覆那則的文字或 caption, 超過 200 字元會截斷並加 `…`. 純貼圖/無文字的訊息會有 id 沒有這個欄位 |
+| `reply_to_user_id` | 被回覆那則的**發送者** uid(不是這一輪發訊息的人, 是被引用那則的原作者). 2026-09-15 補上, 之前一直漏掉 — Telegram 跟 `text`/`caption` 一起內附在同一個 `reply_to_message.from` 物件裡, 舊版 `buildReplyMeta()` 的型別簽章沒宣告這個欄位, 沒被讀進來, 不是刻意不送. 跟 `reply_to_text` 一樣, 只在 Telegram 有內附時才有; 目前沒有 store 補查的備援(那個備援只查得到文字內容, store 沒特別記「被回覆訊息的發送者」這件事單獨查詢用的索引).
 
 **已知限制 (已解決, 有備援):** Telegram 只在**該則訊息夠新**, 或原本就有文字/caption 時, 才會在更新裡給得到 `reply_to_text`. `handleInbound` 現在會自動補位: 只要有 `reply_to_message_id` 卻沒有 `reply_to_text`, 就自動去 `store.lookup()` 查本機紀錄, 查到就補上. 唯一還是會缺席的情況是那則被回覆的訊息**從沒被這支 plugin 經手過** (太早, 在這支 plugin 開始記錄之前), 這時 Claude 還是可以手動呼叫 `lookup_message` 試試看 (行為跟自動補位查的是同一份資料, 只是再查一次通常也不會查到更多), 但已經沒有更好的資料來源了.
 

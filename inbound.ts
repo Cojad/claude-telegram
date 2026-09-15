@@ -33,13 +33,22 @@ const REPLY_TEXT_MAX = 200
 // nowhere else to look it up, see plan.html §05 for the SQLite follow-up).
 // Truncated because the replied-to message could be arbitrarily long and
 // this is meta, not the message being relayed.
-export function buildReplyMeta(replyTo: { message_id: number; text?: string; caption?: string } | undefined):
-  { reply_to_message_id?: string; reply_to_text?: string } {
+//
+// reply_to_user_id: the replied-to message's own sender — Telegram inlines
+// `.from` on that Message object same as it inlines text/caption, but this
+// went unread from the first version of this function (2026-09-15, Cojad
+// asked "why is the replier's uid missing" — not a deliberate omission,
+// the type signature just never declared the field, see git history).
+// Mirrors the main sender's user/user_id shape one level up in inbound.ts.
+export function buildReplyMeta(
+  replyTo: { message_id: number; text?: string; caption?: string; from?: { id: number } } | undefined,
+): { reply_to_message_id?: string; reply_to_text?: string; reply_to_user_id?: string } {
   if (!replyTo) return {}
   const text = replyTo.text ?? replyTo.caption
   return {
     reply_to_message_id: String(replyTo.message_id),
     ...(text != null ? { reply_to_text: text.length > REPLY_TEXT_MAX ? text.slice(0, REPLY_TEXT_MAX) + '…' : text } : {}),
+    ...(replyTo.from != null ? { reply_to_user_id: String(replyTo.from.id) } : {}),
   }
 }
 
@@ -74,7 +83,8 @@ export function createHandleInbound(deps: InboundDeps) {
     const msgIdForStore = ctx.message?.message_id
     const tsForStore = new Date((ctx.message?.date ?? 0) * 1000).toISOString()
     let replyMeta = buildReplyMeta(
-      ctx.message?.reply_to_message as { message_id: number; text?: string; caption?: string } | undefined,
+      ctx.message?.reply_to_message as
+        { message_id: number; text?: string; caption?: string; from?: { id: number } } | undefined,
     )
     const recordSeen = (delivered: boolean): void => {
       if (!chatIdForStore || msgIdForStore == null) return // nothing to index by

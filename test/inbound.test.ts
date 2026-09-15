@@ -40,6 +40,23 @@ test('buildReplyMeta: text over 200 chars is truncated with an ellipsis', () => 
   expect(result.reply_to_text!.endsWith('…')).toBe(true)
 })
 
+// Cojad 2026-09-15: "why is the replied-to sender's uid missing" — Telegram
+// inlines `.from` on the reply_to_message object same as it inlines
+// text/caption, but the original type signature never declared the field
+// so it was silently dropped. This is the fix.
+test('buildReplyMeta: includes reply_to_user_id when Telegram inlines the replied-to sender', () => {
+  expect(buildReplyMeta({ message_id: 42, text: 'original message', from: { id: 999 } })).toEqual({
+    reply_to_message_id: '42',
+    reply_to_text: 'original message',
+    reply_to_user_id: '999',
+  })
+})
+
+test('buildReplyMeta: omits reply_to_user_id when Telegram does not inline a sender (old message)', () => {
+  const result = buildReplyMeta({ message_id: 9, text: 'hi' })
+  expect('reply_to_user_id' in result).toBe(false)
+})
+
 // ---- wired into handleInbound: notification payload + store recording --
 
 function accessAllowingEveryone(): Access {
@@ -81,9 +98,12 @@ function ctxFor(overrides: { message_id: number; date?: number; text?: string; r
   } as unknown as Context
 }
 
-test('handleInbound includes reply_to_message_id/text in the notification meta when the message is a reply', async () => {
+test('handleInbound includes reply_to_message_id/text/user_id in the notification meta when the message is a reply', async () => {
   const { handleInbound, notifications } = harness({ action: 'deliver', access: accessAllowingEveryone() })
-  const ctx = ctxFor({ message_id: 100, reply_to_message: { message_id: 55, text: 'earlier question' } })
+  const ctx = ctxFor({
+    message_id: 100,
+    reply_to_message: { message_id: 55, text: 'earlier question', from: { id: 137438526 } },
+  })
 
   await handleInbound(ctx, 'here is my answer', undefined)
 
@@ -91,6 +111,7 @@ test('handleInbound includes reply_to_message_id/text in the notification meta w
   const meta = notifications[0].params.meta as Record<string, unknown>
   expect(meta.reply_to_message_id).toBe('55')
   expect(meta.reply_to_text).toBe('earlier question')
+  expect(meta.reply_to_user_id).toBe('137438526')
 })
 
 test('handleInbound omits reply_to fields entirely for a non-reply message', async () => {
