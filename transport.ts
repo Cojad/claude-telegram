@@ -11,16 +11,16 @@ import type { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { z } from 'zod'
 import { mkdirSync, writeFileSync } from 'fs'
 import { join } from 'path'
-import type { Access } from './policy'
-import { safeName, type AttachmentMeta } from './inbound'
+import type { Access, InboundContext } from './policy'
+import { safeName, type AttachmentMeta, type HandleInboundContext } from './inbound'
 
 export interface TransportDeps {
   bot: Bot
   mcp: Pick<Server, 'notification' | 'setNotificationHandler'>
-  dmCommandGate: (ctx: Context) => { access: Access; senderId: string } | null
+  dmCommandGate: (ctx: InboundContext) => { access: Access; senderId: string } | null
   loadAccess: () => Access
   handleInbound: (
-    ctx: Context,
+    ctx: HandleInboundContext,
     text: string,
     downloadImage: (() => Promise<string | undefined>) | undefined,
     attachment?: AttachmentMeta,

@@ -15,7 +15,7 @@ import {
   ListToolsRequestSchema,
   CallToolRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js'
-import { Bot, type Context } from 'grammy'
+import { Bot } from 'grammy'
 import { randomBytes } from 'crypto'
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, renameSync, realpathSync, chmodSync } from 'fs'
 import { homedir } from 'os'
@@ -26,12 +26,14 @@ import {
   dmCommandGate as policyDmCommandGate,
   type Access,
   type GateResult,
+  type InboundContext,
 } from './policy'
 import { createPoller } from './poller'
 import { TOOL_DEFINITIONS, callTool } from './outbound'
 import { createHandleInbound } from './inbound'
 import { registerTransport } from './transport'
 import { openStore } from './store'
+import { createMtprotoListener } from './mtproto'
 
 const STATE_DIR = process.env.TELEGRAM_STATE_DIR
   ?? join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'), 'channels', 'telegram')
@@ -147,13 +149,13 @@ function saveAccess(a: Access): void {
 // Thin wrappers: load/save the real access.json, pass the live botUsername
 // and a real pairing-code generator through to the pure decision logic in
 // ./policy. Every call site below is unchanged from before the split.
-function gate(ctx: Context): GateResult {
+function gate(ctx: InboundContext): GateResult {
   const access = loadAccess()
   return policyGate(ctx, access, botUsername, saveAccess, () => randomBytes(3).toString('hex'))
 }
 
 // Like gate() but for bot commands: no pairing side effects, just allow/drop.
-function dmCommandGate(ctx: Context): { access: Access; senderId: string } | null {
+function dmCommandGate(ctx: InboundContext): { access: Access; senderId: string } | null {
   const access = loadAccess()
   return policyDmCommandGate(ctx, access, saveAccess)
 }
@@ -251,10 +253,11 @@ const poller = createPoller({
   onUsername: username => { botUsername = username },
 })
 process.stdin.on('end', () => poller.shutdown())
-process.stdin.on('close', () => poller.shutdown())
-process.on('SIGTERM', () => poller.shutdown())
-process.on('SIGINT', () => poller.shutdown())
-process.on('SIGHUP', () => poller.shutdown())
+const shutdownMtproto = () => { void mtproto?.stop().catch(() => {}) }
+process.stdin.on('close', () => { poller.shutdown(); shutdownMtproto() })
+process.on('SIGTERM', () => { poller.shutdown(); shutdownMtproto() })
+process.on('SIGINT', () => { poller.shutdown(); shutdownMtproto() })
+process.on('SIGHUP', () => { poller.shutdown(); shutdownMtproto() })
 
 // Orphan watchdog: belt-and-suspenders for the stdin 'end'/'close' handlers
 // above. Stdin is the MCP transport pipe inherited straight from the CLI; the
@@ -285,5 +288,29 @@ registerTransport({
 bot.catch(err => {
   process.stderr.write(`telegram channel: handler error (polling continues): ${err.error}\n`)
 })
+
+// Optional supplementary channel: sees messages from OTHER bots, which the
+// Bot API path above structurally cannot (see mtproto.ts's header comment).
+// Opt-in only — TELEGRAM_API_ID/TELEGRAM_API_HASH are "application"
+// credentials (from my.telegram.org), a different kind of secret than the
+// bot token, and most deployments of this plugin have no reason to want
+// this. Absent either var, this whole block is skipped; existing
+// deployments are unaffected.
+const API_ID = process.env.TELEGRAM_API_ID
+const API_HASH = process.env.TELEGRAM_API_HASH
+let mtproto: ReturnType<typeof createMtprotoListener> | undefined
+if (API_ID && API_HASH) {
+  mtproto = createMtprotoListener({
+    apiId: Number(API_ID),
+    apiHash: API_HASH,
+    botToken: TOKEN,
+    sessionFile: join(STATE_DIR, 'mtproto.session'),
+    store,
+    handleInbound,
+  })
+  mtproto.start().catch(err => {
+    process.stderr.write(`telegram channel (mtproto): failed to start: ${err}\n`)
+  })
+}
 
 poller.boot()

@@ -97,6 +97,21 @@ This also means there's no `download_attachment` tool for historical messages
 — photos are downloaded eagerly on arrival since there's no way to fetch them
 later.
 
+## Seeing messages from other bots (optional, via MTProto)
+
+Telegram's Bot API deliberately never delivers messages sent by one bot to another bot — this is
+platform-level, permanent, and unrelated to privacy mode or admin rights (see the
+[Bots FAQ](https://core.telegram.org/bots/faq)). If another bot in the group needs to reach this
+one, the Bot API path in this plugin structurally cannot see it, no matter how access is configured.
+
+Setting both `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` in `.env` (application credentials from
+[my.telegram.org](https://my.telegram.org), a different kind of secret than the bot token) turns
+on a second, independent listener over MTProto (via [GramJS](https://www.npmjs.com/package/telegram))
+that runs alongside the normal Bot API poller. It only ever forwards messages whose sender is
+itself a bot — human messages are already handled reliably by the Bot API path, so this never
+duplicates or races it — and feeds them into the exact same access-control and notification
+pipeline as everything else. Leave both unset and nothing changes; this is fully opt-in.
+
 ## Live progress via hooks (companion pattern)
 
 A "thinking…" placeholder that updates line by line as the assistant works, then deletes

@@ -7,7 +7,29 @@
 // production wires it to the real writer in server.ts.
 
 import { readFileSync, renameSync } from 'fs'
-import type { Context } from 'grammy'
+
+// Structural subset of grammY's Context — deliberately NOT `import type {
+// Context} from 'grammy'`. gate()/isMentioned() only ever read these
+// fields, and a real grammY Context satisfies this shape for free
+// (structural typing), so the Bot API transport (transport.ts) needs no
+// changes. What this buys: a second transport (mtproto.ts, GramJS) can
+// feed the exact same gate()/handleInbound() pipeline by constructing one
+// of these from a completely different SDK's event shape, without either
+// transport depending on the other's library.
+export type InboundEntity = { type: string; offset: number; length: number; user?: { is_bot?: boolean; username?: string } }
+export type InboundContext = {
+  from?: { id: number | string; username?: string }
+  chat?: { id: number | string; type?: string }
+  message?: {
+    message_id?: number
+    date?: number
+    text?: string
+    caption?: string
+    entities?: InboundEntity[]
+    caption_entities?: InboundEntity[]
+    reply_to_message?: { message_id: number; text?: string; caption?: string; from?: { id: number; username?: string } }
+  }
+}
 
 export type PendingEntry = {
   senderId: string
@@ -98,7 +120,7 @@ export type GateResult =
 // write it back (a temp+rename to a real file in production, a no-op or a
 // recorder in tests).
 export function gate(
-  ctx: Context,
+  ctx: InboundContext,
   access: Access,
   botUsername: string,
   persist: (a: Access) => void,
@@ -163,7 +185,7 @@ export function gate(
 }
 
 export function dmCommandGate(
-  ctx: Context,
+  ctx: InboundContext,
   access: Access,
   persist: (a: Access) => void,
 ): { access: Access; senderId: string } | null {
@@ -181,7 +203,7 @@ export function dmCommandGate(
 // function has no dependency beyond its arguments — the bot's own username
 // is only known once grammY has connected, so server.ts closes over the
 // live value and passes it through on every call.
-export function isMentioned(ctx: Context, botUsername: string, extraPatterns?: string[]): boolean {
+export function isMentioned(ctx: InboundContext, botUsername: string, extraPatterns?: string[]): boolean {
   const entities = ctx.message?.entities ?? ctx.message?.caption_entities ?? []
   const text = ctx.message?.text ?? ctx.message?.caption ?? ''
   for (const e of entities) {

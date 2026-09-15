@@ -4,11 +4,22 @@
 // handlers all funnel into handleInbound() rather than talking to gate()
 // or mcp.notification() directly — this is the only place that happens.
 
-import type { Bot, Context } from 'grammy'
+import type { Bot } from 'grammy'
 import type { ReactionTypeEmoji } from 'grammy/types'
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js'
-import type { Access, GateResult } from './policy'
+import type { Access, GateResult, InboundContext } from './policy'
 import type { Store } from './store'
+
+// handleInbound needs one thing gate()/isMentioned() never touch: a way to
+// send the "pairing required" reply. Kept as its own extension of
+// InboundContext (not folded into policy.ts's type) so policy.ts — pure
+// access-control logic — stays free of any notion of "sending a message".
+// reply's return type is `unknown`, not `Promise<void>` — grammY's real
+// ctx.reply() resolves to the sent Message, and TS's function-type
+// assignability wants the wider signature here (a caller that returns more
+// than promised is fine; the mismatch only bites if this type demanded
+// exactly void).
+export type HandleInboundContext = InboundContext & { reply: (text: string) => Promise<unknown> }
 
 export type AttachmentMeta = {
   kind: string
@@ -59,7 +70,7 @@ export function buildReplyMeta(
 const PERMISSION_REPLY_RE = /^\s*(y|yes|n|no)\s+([a-km-z]{5})\s*$/i
 
 export interface InboundDeps {
-  gate: (ctx: Context) => GateResult
+  gate: (ctx: InboundContext) => GateResult
   bot: Pick<Bot, 'api'>
   mcp: Pick<Server, 'notification'>
   /** Every message this plugin sees is recorded here (delivered or not), and
@@ -71,7 +82,7 @@ export function createHandleInbound(deps: InboundDeps) {
   const { gate, bot, mcp, store } = deps
 
   return async function handleInbound(
-    ctx: Context,
+    ctx: HandleInboundContext,
     text: string,
     downloadImage: (() => Promise<string | undefined>) | undefined,
     attachment?: AttachmentMeta,
