@@ -56,6 +56,7 @@
   .prio.p0{background:var(--danger-soft); color:var(--danger);}
   .prio.p1{background:var(--warn-soft); color:var(--warn);}
   .prio.p2{background:var(--surface-2); color:var(--ink-soft); border:1px solid var(--line);}
+  .prio.done{background:var(--accent-soft); color:var(--accent-ink);}
   .suite-body{padding:18px 20px;}
   .why{font-size:13.8px; color:var(--ink-soft); line-height:1.65;}
   .why b{color:var(--ink); font-weight:500;}
@@ -204,9 +205,27 @@
   </section>
 
   <section>
-    <span class="num-tag">04 / 明確不做</span>
-    <div class="deferred">
-      <p><b>bot.on 的各種訊息 handler (text/photo/document/…) 與 MCP CallToolRequestSchema</b> 暫不寫測試. 這些主要是把 grammY 的 ctx 轉呼叫 handleInbound / Telegram API, 要嘛需要真的打 Telegram 的網路請求, 要嘛要建一整套假的 grammY Context 物件, 兩種成本都高, 而且測到的多半是 grammY 或 Telegram API 本身的行為, 不是這支程式自己的邏輯. 等模組化把 handleInbound 拆成純粹的協調邏輯 (輸入一個已解析的 InboundUpdate, 呼叫 policy, 呼叫 sink) 之後, 這塊會自然變得好測, 現在硬測不划算.</p>
+    <span class="num-tag">04 / 執行中修正: 原本說不做, 後來發現值得做</span>
+    <div class="suite">
+      <div class="suite-head">
+        <div><h3>MCP 協定層: tools/list 與 tools/call 的真實往返</h3><div class="target">test/mcp-protocol.test.ts · 已實作</div></div>
+        <span class="prio done">已完成, 8 秒</span>
+      </div>
+      <div class="suite-body">
+        <p class="why"><b>為什麼補這組, 而且是真事故逼出來的:</b> 拆 outbound.ts 那次, find-and-replace 手滑, 把 mcp.connect(new StdioServerTransport()) 整行連同上面的註解一起刪掉了. bun test 當時 21 條全過, 因為沒有一條真的用 MCP client 跟 server.ts 講過話, poller-lifecycle 只看 pid file 跟程序死活, 不知道 MCP 連線斷了. 結果是: server.ts 照常啟動, 印的訊息一切正常, standby 分支也正確判斷該不該接手, 但少了 mcp.connect() 之後沒有東西繼續讀 stdin, 事件迴圈沒東西可等, standby 那個角色的 process 在印完 standing by 幾秒內就自己安靜退出 (exit code 0, 不是崩潰). 這個問題原本在 test-plan 裡被我歸類成「成本高, 不划算」, 拿 @modelcontextprotocol/sdk 現成的 Client + StdioClientTransport 跑起來才發現其實很輕量, 全部三條測試合計 8 秒.</p>
+        <div class="caselist"><table>
+          <thead><tr><th>情境</th><th>驗證</th></tr></thead>
+          <tbody>
+            <tr><td>tools/list</td><td>回傳的名稱剛好是 reply / react / download_attachment / edit_message 四個, 不多不少</td></tr>
+            <tr><td>tools/call react, chat_id 不在 allowlist</td><td>isError=true, 錯誤文字含 not allowlisted (assertAllowedChat 正確透過 outbound.ts 拋出並被接住)</td></tr>
+            <tr><td>tools/call 不存在的工具名</td><td>isError=true, 不是整個連線崩潰</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <div class="deferred" style="margin-top:20px">
+      <p><b>還是明確不做的:</b> bot.on 的各種訊息 handler (text/photo/document/…) 內部邏輯, 和真的打 Telegram 網路 API 的路徑 (sendMessage/sendPhoto 等實際送達). 上面這組測試證明了「跟 server.ts 講 MCP 協定」便宜到可以做, 但「讓 grammY 真的處理一個模擬的 Telegram update, 或真的呼叫 Telegram API」仍然要嘛建一整套假 Context, 要嘛要真的網路請求, 這兩種成本評估沒有變, 繼續等模組化把 handleInbound 拆乾淨再說.</p>
     </div>
   </section>
 
