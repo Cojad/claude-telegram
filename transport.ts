@@ -13,6 +13,28 @@ import { mkdirSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import type { Access, InboundContext } from './policy'
 import { safeName, type AttachmentMeta, type HandleInboundContext } from './inbound'
+import { flattenRichMessage } from './rich'
+
+// Envelope/metadata fields common to every Telegram message update
+// (grammy's Message.ServiceMessage/CommonMessage/CaptionableMessage base
+// fields) — excluded when the catch-all handler logs an unmatched
+// message's remaining keys, so the log line names the actual unhandled
+// content type (e.g. "poll", "location") instead of fifteen scaffolding
+// fields every message already carries.
+const MESSAGE_ENVELOPE_KEYS = new Set([
+  'message_id', 'message_thread_id', 'from', 'sender_chat', 'date',
+  'guest_query_id', 'business_connection_id', 'chat', 'is_topic_message',
+  'direct_messages_topic', 'sender_tag', 'receiver_user',
+  'ephemeral_message_id', 'sender_boost_count', 'sender_business_bot',
+  'forward_origin', 'is_automatic_forward', 'reply_to_message',
+  'reply_to_checklist_task_id', 'reply_to_poll_option_id', 'is_paid_post',
+  'external_reply', 'quote', 'reply_to_story', 'via_bot',
+  'guest_bot_caller_user', 'guest_bot_caller_chat', 'edit_date',
+  'has_protected_content', 'show_caption_above_media', 'is_from_offline',
+  'author_signature', 'link_preview_options', 'effect_id',
+  'paid_star_count', 'reply_markup', 'caption', 'caption_entities',
+  'entities',
+])
 
 export interface TransportDeps {
   bot: Bot
@@ -270,5 +292,28 @@ export function registerTransport(deps: TransportDeps): void {
       file_id: sticker.file_id,
       size: sticker.file_size,
     })
+  })
+
+  // Bot API 10.x "Rich Message" — content lives entirely in
+  // rich_message.blocks, there is no plain text/caption field, so without
+  // this handler these arrived with nothing for handleInbound to forward
+  // (GitHub issue #5724). Requires @grammyjs/types>=5.0.0 for the
+  // rich_message field/filter query to exist at all.
+  bot.on('message:rich_message', async ctx => {
+    const flattened = flattenRichMessage(ctx.message.rich_message)
+    await handleInbound(ctx, flattened || '(rich message with no renderable content)', undefined)
+  })
+
+  // Catch-all: any message type not matched by a specific handler above
+  // (a future Bot API addition we don't know about yet) used to vanish
+  // without a trace, same failure mode rich_message had before it got its
+  // own handler. This keeps that from repeating silently — logs which
+  // non-envelope keys showed up, and still forwards a placeholder so the
+  // arrival is at least visible instead of dropped.
+  bot.on('message', async ctx => {
+    const keys = Object.keys(ctx.message).filter(k => !MESSAGE_ENVELOPE_KEYS.has(k))
+    const keyList = keys.join(', ') || '(none)'
+    process.stderr.write(`telegram channel: unmatched message type, content keys: ${keyList}\n`)
+    await handleInbound(ctx, `(unsupported message type: ${keyList})`, undefined)
   })
 }
