@@ -120,6 +120,7 @@ export function buildMtprotoContext(input: MtprotoMessageInput): HandleInboundCo
   return {
     from: { id: input.senderId, username: input.senderUsername },
     chat: { id: input.chatId, type: input.chatType },
+    mtproto: true,
     message: {
       message_id: input.messageId,
       date: input.date,

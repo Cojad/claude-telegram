@@ -53,6 +53,7 @@ test('buildMtprotoContext: a plain group message from a bot maps straight across
   expect(ctx.message?.entities).toEqual([])
   expect(ctx.message?.reply_to_message).toBeUndefined()
   expect(typeof ctx.reply).toBe('function')
+  expect(ctx.mtproto).toBe(true) // lets meta.mtproto="true" distinguish this from the Bot API path
 })
 
 test('buildMtprotoContext: an @mention entity survives the translation, non-mention entities are dropped', () => {

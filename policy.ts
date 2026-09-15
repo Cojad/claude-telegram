@@ -20,6 +20,12 @@ export type InboundEntity = { type: string; offset: number; length: number; user
 export type InboundContext = {
   from?: { id: number | string; username?: string }
   chat?: { id: number | string; type?: string }
+  /** Set by mtproto.ts's transport; absent (not `false`) for the Bot API
+   *  path — lets a message's meta say which channel actually delivered it,
+   *  since both can now carry the same kind of traffic (Bot-to-Bot
+   *  Communication Mode means the Bot API sees other bots' messages too,
+   *  not just this listener). Cojad, 2026-09-15. */
+  mtproto?: boolean
   message?: {
     message_id?: number
     date?: number

@@ -83,6 +83,22 @@ here is my answer
 
 邏輯在 `inbound.ts` 的 `buildReplyMeta()`, 純函式, 見 `test/inbound.test.ts`.
 
+## 六之一, 來源標記: `mtproto`
+
+```xml
+<channel source="plugin:telegram:telegram" chat_id="-1001068509881" message_id="154270" user="BaldEagleBot" user_id="133770478" ts="2026-09-15T09:48:00.000Z" mtproto="true">
+some message
+</channel>
+```
+
+| 屬性 | 何時出現 |
+|---|---|
+| `mtproto` | 值固定是字串 `"true"`. 只在這則訊息是透過 `mtproto.ts` 那個補充監聽器(GramJS/MTProto)送進來時才有這個屬性; 一般 Bot API 路徑(grammY, 絕大多數訊息)完全不會有這個屬性, 不是「false」, 是屬性本身不存在. |
+
+**為什麼需要這個:** 2026-09-15 發現 Bot-to-Bot Communication Mode(BotFather 設定)這個較新功能一旦兩邊都開, Bot API 本身也會直接收到其他 bot 的訊息, 不再是 MTProto 監聽器獨有的能力. 這代表同一種「來自另一個 bot 的訊息」現在可能經由兩條完全不同的路徑送達, 沒有這個標記會分不清楚一則訊息實際是哪條路徑送進來的. 只依賴「這是不是 bot 發的」已經不夠用來反推來源了.
+
+邏輯在 `policy.ts` 的 `InboundContext.mtproto` 型別, `mtproto.ts` 的 `buildMtprotoContext()` 設值, `inbound.ts` 的 `handleInbound()` 讀出並塞進 `meta.mtproto`, 見 `test/inbound.test.ts` 跟 `test/mtproto.test.ts`.
+
 ## 四, 對應到原始碼: 實際送出的 JSON-RPC 通知
 
 `inbound.ts` 的 `createHandleInbound()` 組出的通知大致是這個形狀:

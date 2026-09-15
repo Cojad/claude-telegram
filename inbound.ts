@@ -203,6 +203,14 @@ export function createHandleInbound(deps: InboundDeps) {
           user: from.username ?? String(from.id),
           user_id: String(from.id),
           ts: tsForStore,
+          // Which transport actually delivered this — absent (not "false")
+          // for the ordinary Bot API path. Cojad, 2026-09-15: wanted this
+          // visible after Bot-to-Bot Communication Mode turned out to make
+          // the Bot API path carry other-bot messages too, on top of this
+          // plugin's own separate MTProto listener (mtproto.ts) — without
+          // this flag there was no way to tell which one actually delivered
+          // a given message.
+          ...(ctx.mtproto ? { mtproto: 'true' } : {}),
           ...replyMeta,
           ...(imagePath ? { image_path: imagePath } : {}),
           ...(attachment ? {

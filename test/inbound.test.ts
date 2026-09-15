@@ -84,10 +84,11 @@ function harness(gateResult: GateResult, seeded: Record<string, MessageRecord> =
   return { handleInbound: createHandleInbound(deps), notifications, recorded }
 }
 
-function ctxFor(overrides: { message_id: number; date?: number; text?: string; reply_to_message?: unknown; from?: unknown; chat?: unknown }): Context {
+function ctxFor(overrides: { message_id: number; date?: number; text?: string; reply_to_message?: unknown; from?: unknown; chat?: unknown; mtproto?: boolean }): Context {
   return {
     from: overrides.from ?? { id: 1, username: 'alice' },
     chat: overrides.chat ?? { id: 1 },
+    mtproto: overrides.mtproto,
     message: {
       message_id: overrides.message_id,
       date: overrides.date ?? 0,
@@ -97,6 +98,22 @@ function ctxFor(overrides: { message_id: number; date?: number; text?: string; r
     reply: async () => {},
   } as unknown as Context
 }
+
+test('handleInbound marks meta.mtproto="true" when the context came from the MTProto listener', async () => {
+  const { handleInbound, notifications } = harness({ action: 'deliver', access: accessAllowingEveryone() })
+  const ctx = ctxFor({ message_id: 1, mtproto: true })
+  await handleInbound(ctx, 'hi from another bot', undefined)
+  const meta = notifications[0].params.meta as Record<string, unknown>
+  expect(meta.mtproto).toBe('true')
+})
+
+test('handleInbound omits meta.mtproto entirely for the ordinary Bot API path', async () => {
+  const { handleInbound, notifications } = harness({ action: 'deliver', access: accessAllowingEveryone() })
+  const ctx = ctxFor({ message_id: 1 })
+  await handleInbound(ctx, 'hi from a human', undefined)
+  const meta = notifications[0].params.meta as Record<string, unknown>
+  expect('mtproto' in meta).toBe(false)
+})
 
 test('handleInbound includes reply_to_message_id/text/user_id in the notification meta when the message is a reply', async () => {
   const { handleInbound, notifications } = harness({ action: 'deliver', access: accessAllowingEveryone() })
