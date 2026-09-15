@@ -16,12 +16,11 @@ import {
   CallToolRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
-import { Bot, GrammyError, InlineKeyboard, InputFile, type Context } from 'grammy'
+import { Bot, InlineKeyboard, InputFile, type Context } from 'grammy'
 import type { ReactionTypeEmoji } from 'grammy/types'
 import { randomBytes } from 'crypto'
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync, renameSync, realpathSync, chmodSync } from 'fs'
 import { homedir } from 'os'
-import { execFileSync } from 'child_process'
 import { join, extname, sep } from 'path'
 import { chunk } from './format'
 import {
@@ -31,6 +30,7 @@ import {
   type Access,
   type GateResult,
 } from './policy'
+import { createPoller } from './poller'
 
 const STATE_DIR = process.env.TELEGRAM_STATE_DIR
   ?? join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'), 'channels', 'telegram')
@@ -458,25 +458,20 @@ await mcp.connect(new StdioServerTransport())
 
 // When Claude Code closes the MCP connection, stdin gets EOF. Without this
 // the bot keeps polling forever as a zombie, holding the token and blocking
-// the next session with 409 Conflict.
-let shuttingDown = false
-function shutdown(): void {
-  if (shuttingDown) return
-  shuttingDown = true
-  process.stderr.write('telegram channel: shutting down\n')
-  try {
-    if (parseInt(readFileSync(PID_FILE, 'utf8'), 10) === process.pid) rmSync(PID_FILE)
-  } catch {}
-  // bot.stop() signals the poll loop to end; the current getUpdates request
-  // may take up to its long-poll timeout to return. Force-exit after 2s.
-  setTimeout(() => process.exit(0), 2000)
-  void Promise.resolve(bot.stop()).finally(() => process.exit(0))
-}
-process.stdin.on('end', shutdown)
-process.stdin.on('close', shutdown)
-process.on('SIGTERM', shutdown)
-process.on('SIGINT', shutdown)
-process.on('SIGHUP', shutdown)
+// the next session with 409 Conflict. Full lifecycle (pid-file ownership,
+// cooperative slot handoff, TELEGRAM_STANDBY_ONLY) lives in ./poller —
+// this just wires it to the real bot, pid file, and process signals.
+const poller = createPoller({
+  pidFile: PID_FILE,
+  bot,
+  standbyOnly: process.env.TELEGRAM_STANDBY_ONLY === '1',
+  onUsername: username => { botUsername = username },
+})
+process.stdin.on('end', () => poller.shutdown())
+process.stdin.on('close', () => poller.shutdown())
+process.on('SIGTERM', () => poller.shutdown())
+process.on('SIGINT', () => poller.shutdown())
+process.on('SIGHUP', () => poller.shutdown())
 
 // Orphan watchdog: belt-and-suspenders for the stdin 'end'/'close' handlers
 // above. Stdin is the MCP transport pipe inherited straight from the CLI; the
@@ -485,7 +480,7 @@ process.on('SIGHUP', shutdown)
 // false-fires when the bun-run/shell wrapper exits or execs during normal
 // startup and we get reparented to init.
 setInterval(() => {
-  if (process.stdin.destroyed || process.stdin.readableEnded) shutdown()
+  if (process.stdin.destroyed || process.stdin.readableEnded) poller.shutdown()
 }, 5000).unref()
 
 // Commands are DM-only. Responding in groups would: (1) leak pairing codes via
@@ -803,132 +798,4 @@ bot.catch(err => {
   process.stderr.write(`telegram channel: handler error (polling continues): ${err.error}\n`)
 })
 
-// Telegram allows exactly one getUpdates consumer per token, so exactly one
-// server.ts polls at a time; bot.pid records the current holder. A live
-// healthy holder is an incumbent serving another Claude Code session — never
-// kill it (gh-81571: an earlier startup guard SIGTERMed any live holder, so
-// starting a second session stole the channel from the first and, when the
-// second session exited, no poller remained at all and the bot went silent).
-// Instead:
-//   - slot free (no pid file, holder dead, or pid recycled to some other
-//     program) → claim it and poll
-//   - live holder → standby: outbound tools stay fully usable, and a watcher
-//     claims the slot the moment the holder goes away (session exit, crash —
-//     the orphan watchdog above reaps pollers whose CLI died)
-// so the last session standing always ends up holding the channel, and the
-// pid file is removed by its owner in shutdown().
-function livePollerPid(): number | null {
-  let holder: number
-  try {
-    holder = parseInt(readFileSync(PID_FILE, 'utf8'), 10)
-  } catch { return null } // no pid file — slot is free
-  if (!(holder > 1) || holder === process.pid) return null
-  try {
-    process.kill(holder, 0) // throws ESRCH once the process is gone
-  } catch (err) {
-    // EPERM = alive but owned by another user — never fight over the slot.
-    return (err as NodeJS.ErrnoException).code === 'EPERM' ? holder : null
-  }
-  // PID liveness alone can't tell an incumbent poller from an unrelated
-  // process that recycled its pid — check the process identity too.
-  // /proc/<pid>/cmdline (Linux) needs no subprocess; ps covers macOS.
-  try {
-    const cmdline = readFileSync(`/proc/${holder}/cmdline`, 'utf8')
-    return cmdline.includes('server.ts') ? holder : null
-  } catch {}
-  try {
-    const args = execFileSync('ps', ['-p', String(holder), '-o', 'args='], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
-    return args.includes('server.ts') ? holder : null
-  } catch {
-    // Identity unverifiable (Windows has no ps). Treat the slot as free
-    // rather than deferring forever to an unknown pid; if it IS a live
-    // poller, the 409 retry loop in startPolling reports the conflict
-    // instead of us killing anything.
-    return null
-  }
-}
-
-let polling = false
-function tryBecomePoller(): void {
-  if (polling || shuttingDown) return
-  const holder = livePollerPid()
-  if (holder !== null) return // healthy incumbent — leave it alone
-  writeFileSync(PID_FILE, String(process.pid))
-  // Two standbys can race to claim; last writer owns the file, everyone else
-  // re-reads, sees a different pid, and stays in standby.
-  try {
-    if (parseInt(readFileSync(PID_FILE, 'utf8'), 10) !== process.pid) return
-  } catch { return }
-  polling = true
-  startPolling()
-}
-
-// Local patch (not upstream): TELEGRAM_STANDBY_ONLY=1 in the state dir's .env
-// (or the environment) makes this instance never claim the polling slot and
-// never touch the Telegram API — outbound tools only. Used for the default
-// state dir so non-channel sessions and teammates stay inert.
-const STANDBY_ONLY = process.env.TELEGRAM_STANDBY_ONLY === '1'
-if (STANDBY_ONLY) {
-  process.stderr.write('telegram channel: TELEGRAM_STANDBY_ONLY=1 — never polling, outbound tools only\n')
-} else {
-  tryBecomePoller()
-}
-if (!polling && !STANDBY_ONLY) {
-  process.stderr.write(
-    `telegram channel: another session's poller holds this channel — ` +
-    `outbound tools active, standing by to take over inbound when it exits\n`,
-  )
-  const standbyWatcher = setInterval(() => {
-    tryBecomePoller()
-    if (polling || shuttingDown) clearInterval(standbyWatcher)
-  }, 2000)
-  standbyWatcher.unref()
-}
-
-// Retry polling with backoff on any error. Previously only 409 was retried —
-// a single ETIMEDOUT/ECONNRESET/DNS failure rejected bot.start(), the catch
-// returned, and polling stopped permanently while the process stayed alive
-// (MCP stdin keeps it running). Outbound tools kept working but the bot was
-// deaf to inbound messages until a full restart.
-function startPolling(): void {
-  void (async () => {
-  for (let attempt = 1; ; attempt++) {
-    try {
-      await bot.start({
-        onStart: info => {
-          attempt = 0
-          botUsername = info.username
-          process.stderr.write(`telegram channel: polling as @${info.username}\n`)
-          void bot.api.setMyCommands(
-            [
-              { command: 'start', description: 'Welcome and setup guide' },
-              { command: 'help', description: 'What this bot can do' },
-              { command: 'status', description: 'Check your pairing status' },
-            ],
-            { scope: { type: 'all_private_chats' } },
-          ).catch(() => {})
-        },
-      })
-      return // bot.stop() was called — clean exit from the loop
-    } catch (err) {
-      if (shuttingDown) return
-      // bot.stop() mid-setup rejects with grammy's "Aborted delay" — expected, not an error.
-      if (err instanceof Error && err.message === 'Aborted delay') return
-      const is409 = err instanceof GrammyError && err.error_code === 409
-      if (is409 && attempt >= 8) {
-        process.stderr.write(
-          `telegram channel: 409 Conflict persists after ${attempt} attempts — ` +
-          `another poller is holding the bot token (stray 'bun server.ts' process or a second session). Exiting.\n`,
-        )
-        return
-      }
-      const delay = Math.min(1000 * attempt, 15000)
-      const detail = is409
-        ? `409 Conflict${attempt === 1 ? ' — another instance is polling (zombie session, or a second Claude Code running?)' : ''}`
-        : `polling error: ${err}`
-      process.stderr.write(`telegram channel: ${detail}, retrying in ${delay / 1000}s\n`)
-      await new Promise(r => setTimeout(r, delay))
-    }
-  }
-  })()
-}
+poller.boot()
