@@ -37,6 +37,7 @@
 import { TelegramClient } from 'telegram'
 import { StringSession } from 'telegram/sessions'
 import { NewMessage, type NewMessageEvent } from 'telegram/events'
+import { Logger, LogLevel } from 'telegram/extensions/Logger'
 import { readFileSync, writeFileSync } from 'fs'
 import type { HandleInboundContext } from './inbound'
 import type { InboundEntity } from './policy'
@@ -142,7 +143,20 @@ export function createMtprotoListener(deps: MtprotoDeps) {
     new StringSession(loadSessionString(sessionFile)),
     TELEGRAM_DESKTOP_API_ID,
     TELEGRAM_DESKTOP_API_HASH,
-    { connectionRetries: 5 },
+    {
+      connectionRetries: 5,
+      // GramJS's default logger calls console.log() — straight to stdout,
+      // which for an MCP server over stdio IS the JSON-RPC protocol
+      // channel. Found live (2026-09-15): the very first production boot
+      // of this file produced "Ignoring non-JSON line on stdout: JSON
+      // Parse error: Unrecognized token ''" in Claude Code's own
+      // MCP client log — that escape byte is GramJS's ANSI color code for
+      // an INFO-level connection message. Silencing the logger entirely
+      // isn't a preference, it's required correctness for a stdio
+      // transport; this module's own diagnostics already go through
+      // process.stderr.write, same as every other file in this plugin.
+      baseLogger: new Logger(LogLevel.NONE),
+    },
   )
 
   async function onEvent(event: NewMessageEvent): Promise<void> {
