@@ -7,6 +7,8 @@
 // production wires it to the real writer in server.ts.
 
 import { readFileSync, renameSync } from 'fs'
+import type { RichMessage } from '@grammyjs/types'
+import { flattenRichMessage } from './rich'
 
 // Structural subset of grammY's Context — deliberately NOT `import type {
 // Context} from 'grammy'`. gate()/isMentioned() only ever read these
@@ -37,6 +39,15 @@ export type InboundContext = {
     entities?: InboundEntity[]
     caption_entities?: InboundEntity[]
     reply_to_message?: { message_id: number; text?: string; caption?: string; from?: { id: number; username?: string } }
+    /** Bot API 10.x "Rich Message" — content lives in `.blocks`, not `.text`.
+     *  isMentioned() falls back to flattening this when text/caption are
+     *  both absent. Found live (2026-09-15): every rich_message from
+     *  another bot was silently unmatchable against mentionPatterns
+     *  because isMentioned() only ever read `.text`/`.caption`, neither of
+     *  which a rich_message carries — the flattened content transport.ts
+     *  computes for display/storage never reached the mention check at
+     *  all. */
+    rich_message?: RichMessage
   }
 }
 
@@ -214,7 +225,10 @@ export function dmCommandGate(
 // live value and passes it through on every call.
 export function isMentioned(ctx: InboundContext, botUsername: string, extraPatterns?: string[]): boolean {
   const entities = ctx.message?.entities ?? ctx.message?.caption_entities ?? []
-  const text = ctx.message?.text ?? ctx.message?.caption ?? ''
+  const text =
+    ctx.message?.text ??
+    ctx.message?.caption ??
+    (ctx.message?.rich_message ? flattenRichMessage(ctx.message.rich_message) : '')
   for (const e of entities) {
     if (e.type === 'mention') {
       const mentioned = text.slice(e.offset, e.offset + e.length)

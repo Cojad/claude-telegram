@@ -21,6 +21,7 @@ function makeCtx(opts: {
   text?: string
   entities?: Array<Record<string, unknown>>
   replyFromUsername?: string
+  richBlocks?: unknown[]
 }): Context {
   return {
     from: opts.fromId != null ? { id: opts.fromId } : undefined,
@@ -31,6 +32,7 @@ function makeCtx(opts: {
       reply_to_message: opts.replyFromUsername
         ? { from: { username: opts.replyFromUsername } }
         : undefined,
+      rich_message: opts.richBlocks ? { blocks: opts.richBlocks } : undefined,
     },
   } as unknown as Context
 }
@@ -63,6 +65,31 @@ test('isMentioned: ASCII pattern with \\b matches at the start', () => {
 test('isMentioned: ASCII \\b boundary prevents a prefix false-positive', () => {
   const ctx = makeCtx({ fromId: 1, chatId: -1, chatType: 'group', text: 'ccxxx 早安' })
   expect(isMentioned(ctx, 'coke2erobot', ['^cc\\b'])).toBe(false)
+})
+
+test('isMentioned: regression — a rich_message carrying the mention word was unmatchable (2026-09-16 bug)', () => {
+  // Real-world trigger: OpenClaw's status/reply output now arrives as a Bot
+  // API 10.x Rich Message, which has no .text/.caption at all — the content
+  // lives entirely in rich_message.blocks. isMentioned() only ever read
+  // .text/.caption, so every rich_message from another bot silently failed
+  // mention detection no matter what it said, even right after the
+  // flattening logic (rich.ts) shipped to fix rich_message's *content*
+  // being empty — that fix never touched the *mention check*, which reads
+  // ctx.message directly rather than the already-flattened text
+  // transport.ts computes for display/storage.
+  const ctx = makeCtx({
+    fromId: 1, chatId: -1, chatType: 'group',
+    richBlocks: [{ type: 'paragraph', text: 'cc，哈囉！拍拍在這裡 🦅' }],
+  })
+  expect(isMentioned(ctx, 'coke2erobot', ['cc'])).toBe(true)
+})
+
+test('isMentioned: a rich_message with no mention word still does not match', () => {
+  const ctx = makeCtx({
+    fromId: 1, chatId: -1, chatType: 'group',
+    richBlocks: [{ type: 'paragraph', text: '完全不相干的文字' }],
+  })
+  expect(isMentioned(ctx, 'coke2erobot', ['cc', '柯柯'])).toBe(false)
 })
 
 test('isMentioned: replying to the bot counts as a mention regardless of text or patterns', () => {
