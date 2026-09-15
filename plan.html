@@ -1,0 +1,485 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>Telegram Bridge Blueprint</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root{
+    --bg:#f5f6f2; --surface:#ffffff; --surface-2:#eceee7; --ink:#1a231e; --ink-soft:#55655a;
+    --line:#d8dcd2; --accent:#1c8a6c; --accent-ink:#0d3f31; --accent-soft:#dcefe7;
+    --warn:#b3541c; --warn-soft:#f5e6d8; --shadow: 0 1px 2px rgba(26,35,30,.06), 0 6px 20px rgba(26,35,30,.05);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#10140f; --surface:#171d16; --surface-2:#1e2620; --ink:#e8ece4; --ink-soft:#a6b0a0;
+      --line:#2b342a; --accent:#4fd3a8; --accent-ink:#bdf3e0; --accent-soft:#16332a;
+      --warn:#e0a25c; --warn-soft:#3a2a18; --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#10140f; --surface:#171d16; --surface-2:#1e2620; --ink:#e8ece4; --ink-soft:#a6b0a0;
+    --line:#2b342a; --accent:#4fd3a8; --accent-ink:#bdf3e0; --accent-soft:#16332a;
+    --warn:#e0a25c; --warn-soft:#3a2a18; --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.35);
+  }
+
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:'IBM Plex Sans', system-ui, -apple-system, "Noto Sans TC", sans-serif;
+    padding:0 20px; padding-block: 56px;
+  }
+  .wrap{max-width:900px; margin:0 auto;}
+  .prose{max-width:66ch;}
+  h1,h2,h3{font-family:'IBM Plex Serif', Georgia, serif; text-wrap:balance; font-weight:600; margin:0;}
+  code, .mono{font-family:'IBM Plex Mono', ui-monospace, SFMono-Regular, monospace;}
+  a{color:var(--accent);}
+
+  /* ---- header ---- */
+  .eyebrow{
+    font-family:'IBM Plex Mono', monospace; font-size:12.5px; letter-spacing:.09em; text-transform:uppercase;
+    color:var(--accent-ink); background:var(--accent-soft); display:inline-block;
+    padding:4px 10px; border-radius:3px; margin-bottom:18px;
+  }
+  header h1{font-size:clamp(28px,4.2vw,40px); line-height:1.15; max-width:20ch;}
+  .subtitle{color:var(--ink-soft); font-size:17px; line-height:1.6; margin-top:14px; max-width:60ch;}
+  .metarow{
+    display:flex; flex-wrap:wrap; gap:10px 28px; margin-top:26px; padding-top:20px;
+    border-top:1px solid var(--line); font-size:13px; color:var(--ink-soft);
+  }
+  .metarow b{color:var(--ink); font-weight:500;}
+  .metarow .mono{font-size:12.5px;}
+
+  section{margin-top:64px;}
+  .num-tag{
+    font-family:'IBM Plex Mono', monospace; font-size:13px; color:var(--ink-soft);
+    letter-spacing:.04em;
+  }
+  h2{font-size:23px; margin-top:6px;}
+  h2 + p, .lede{color:var(--ink-soft); margin-top:10px;}
+  p{line-height:1.7;}
+  p + p{margin-top:14px;}
+
+  /* ---- current-shape callout ---- */
+  .monolith{
+    margin-top:26px; border:1px solid var(--line); border-radius:10px; background:var(--surface);
+    box-shadow:var(--shadow); padding:22px 24px;
+  }
+  .monolith .filecard{
+    display:flex; align-items:baseline; justify-content:space-between; gap:12px;
+    border-bottom:1px dashed var(--line); padding-bottom:12px; margin-bottom:14px;
+  }
+  .monolith .filecard .mono{font-size:14.5px; color:var(--ink);}
+  .monolith .filecard span{font-size:13px; color:var(--ink-soft);}
+  .responsibility-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:10px;}
+  .resp{
+    background:var(--surface-2); border-radius:7px; padding:10px 12px; font-size:13.5px;
+  }
+  .resp .lines{display:block; font-family:'IBM Plex Mono',monospace; font-size:11.5px; color:var(--ink-soft); margin-top:3px;}
+
+  /* ---- diagram ---- */
+  .diagram-frame{
+    margin-top:28px; border:1px solid var(--line); border-radius:10px; background:var(--surface);
+    box-shadow:var(--shadow); padding:8px; overflow-x:auto;
+  }
+  svg{display:block; width:100%; height:auto; min-width:640px;}
+  .node-box{fill:var(--surface-2); stroke:var(--line);}
+  .node-box.accent{fill:var(--accent-soft); stroke:var(--accent);}
+  .node-title{font-family:'IBM Plex Sans',sans-serif; font-weight:600; fill:var(--ink); font-size:14px;}
+  .node-sub{font-family:'IBM Plex Mono',monospace; fill:var(--ink-soft); font-size:10.5px;}
+  .flow-label{font-family:'IBM Plex Mono',monospace; fill:var(--ink-soft); font-size:10.5px;}
+  .flow-line{stroke:var(--ink-soft); stroke-width:1.4; fill:none;}
+  .flow-line.accent{stroke:var(--accent); stroke-width:1.6;}
+
+  /* ---- module cards ---- */
+  .module-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:14px; margin-top:22px;}
+  .module-card{
+    background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:18px 20px;
+    box-shadow:var(--shadow);
+  }
+  .module-card .tag{
+    font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.06em; text-transform:uppercase;
+    color:var(--accent-ink); background:var(--accent-soft); display:inline-block; padding:2px 8px; border-radius:3px;
+  }
+  .module-card h3{font-size:16.5px; margin-top:10px;}
+  .module-card p{font-size:13.8px; color:var(--ink-soft); margin-top:8px; line-height:1.55;}
+  .module-card .moves-from{
+    margin-top:12px; padding-top:10px; border-top:1px solid var(--line);
+    font-family:'IBM Plex Mono',monospace; font-size:11.5px; color:var(--ink-soft);
+  }
+
+  /* ---- code compare ---- */
+  .codecompare{display:grid; grid-template-columns:1fr; gap:14px; margin-top:22px;}
+  @media (min-width:720px){ .codecompare{grid-template-columns:1fr 1fr;} }
+  .codeblock{
+    background:var(--surface-2); border:1px solid var(--line); border-radius:9px; overflow:hidden;
+  }
+  .codeblock .label{
+    font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.05em; text-transform:uppercase;
+    color:var(--ink-soft); padding:9px 14px; border-bottom:1px solid var(--line);
+  }
+  .codeblock pre{margin:0; padding:14px 16px; font-family:'IBM Plex Mono',monospace; font-size:12.3px; line-height:1.65; overflow-x:auto; color:var(--ink);}
+  .codeblock .added{background:var(--accent-soft); display:block; margin:0 -16px; padding:0 16px; border-left:3px solid var(--accent);}
+
+  /* ---- schema table ---- */
+  .tablewrap{overflow-x:auto; margin-top:22px; border:1px solid var(--line); border-radius:10px; background:var(--surface); box-shadow:var(--shadow);}
+  table{border-collapse:collapse; width:100%; font-size:13.3px; min-width:560px;}
+  th,td{text-align:left; padding:10px 14px; border-bottom:1px solid var(--line);}
+  th{font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.05em; text-transform:uppercase; color:var(--ink-soft); background:var(--surface-2);}
+  td.mono{font-size:12.5px;}
+  tr:last-child td{border-bottom:none;}
+  .pk{color:var(--accent-ink); font-weight:600;}
+
+  .gapcallout{
+    margin-top:20px; display:flex; gap:12px; padding:14px 16px; background:var(--warn-soft);
+    border:1px solid color-mix(in srgb, var(--warn) 35%, var(--line)); border-radius:9px; font-size:13.6px; color:var(--ink);
+  }
+  .gapcallout .dot{width:8px; height:8px; border-radius:50%; background:var(--warn); flex:none; margin-top:6px;}
+
+  .todo-badge{
+    font-family:'IBM Plex Mono', monospace; font-size:11.5px; letter-spacing:.06em; text-transform:uppercase;
+    color:var(--warn); background:var(--warn-soft); display:inline-block; padding:3px 9px; border-radius:3px;
+    border:1px solid color-mix(in srgb, var(--warn) 40%, transparent);
+  }
+  .module-card .tag.todo{color:var(--warn); background:var(--warn-soft);}
+  .module-card .status{
+    float:right; font-family:'IBM Plex Mono',monospace; font-size:10.5px; color:var(--ink-soft);
+  }
+
+  /* ---- phases ---- */
+  .phases{margin-top:26px; display:flex; flex-direction:column;}
+  .phase{display:grid; grid-template-columns:44px 1fr; gap:16px; padding:20px 0; border-top:1px solid var(--line);}
+  .phase:first-child{border-top:none;}
+  .phase .pnum{
+    font-family:'IBM Plex Serif',serif; font-weight:600; font-size:22px; color:var(--ink-soft);
+  }
+  .phase h3{font-size:16px;}
+  .phase p{font-size:13.8px; color:var(--ink-soft); margin-top:6px;}
+  .phase .risk{
+    display:inline-block; margin-top:10px; font-family:'IBM Plex Mono',monospace; font-size:11px;
+    letter-spacing:.04em; padding:2px 8px; border-radius:3px; background:var(--surface-2); color:var(--ink-soft);
+  }
+
+  footer{
+    margin-top:70px; padding-top:20px; border-top:1px solid var(--line);
+    font-size:12.5px; color:var(--ink-soft); display:flex; flex-wrap:wrap; gap:6px 20px;
+  }
+  footer .mono{font-size:12px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <span class="eyebrow">草案 · claude-telegram fork</span>
+    <h1>把 server.ts 拆成六個各司其職的模組</h1>
+    <p class="subtitle">目前一支 1109 行的檔案同時是傳輸層, 存取政策, 收發管線, 跟 Telegram 排隊的接線員. 這份草案提出拆分方式, 並加兩個具體功能: meta 補上被回覆訊息的 id, 以及用 SQLite 記下每一則進出的訊息, 讓事後可以依 chat_id + message_id 查回上下文.</p>
+    <div class="metarow">
+      <div><b>Repo</b> <span class="mono">/x/code/claude-telegram</span></div>
+      <div><b>基準 commit</b> <span class="mono">510dbaa</span></div>
+      <div><b>上游</b> claude-plugins-official / external_plugins/telegram v0.0.7</div>
+      <div><b>狀態</b> 草案, 尚未動工</div>
+    </div>
+  </header>
+
+  <section>
+    <span class="num-tag">01 / 現況</span>
+    <h2>一個檔案身兼四種角色</h2>
+    <p class="lede">今晚處理的三個問題 (poller 互搶, 柯柯 regex 從未生效, 回覆訊息查無原文) 剛好各自對應一種角色, 而這三種角色現在全部揉在同一個檔案, 同一個 process 存活週期裡.</p>
+    <div class="monolith">
+      <div class="filecard">
+        <span class="mono">server.ts</span>
+        <span>1109 行, 0 個內部模組邊界</span>
+      </div>
+      <div class="responsibility-grid">
+        <div class="resp">Telegram 傳輸 / 指令<span class="lines">bot.command · bot.on × 9</span></div>
+        <div class="resp">存取政策 (gate)<span class="lines">216–345</span></div>
+        <div class="resp">MCP 工具與分段<span class="lines">371–637</span></div>
+        <div class="resp">Inbound 管線<span class="lines">887–975</span></div>
+        <div class="resp">Poller 生命週期<span class="lines">995–1109</span></div>
+        <div class="resp">訊息紀錄<span class="lines">不存在</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <span class="num-tag">02 / 角色分配</span>
+    <h2>比 inbound / outbound / operator 更細一層</h2>
+    <p class="lede">你提的三分法方向是對的, 但「operator」目前扛了兩件互不相干的事: 誰能講話 (存取政策) 跟誰在跟 Telegram 排隊 (poller 生命週期). 今晚的兩個事故剛好各自打中其中一個, 拆開才不會一改就兩邊一起壞.</p>
+
+    <div class="diagram-frame">
+      <svg viewBox="0 0 900 430" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="var(--ink-soft)"></path>
+          </marker>
+          <marker id="arrow-accent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"></path>
+          </marker>
+        </defs>
+
+        <!-- Telegram -->
+        <rect x="20" y="190" width="110" height="56" rx="8" class="node-box"></rect>
+        <text x="75" y="214" text-anchor="middle" class="node-title">Telegram</text>
+        <text x="75" y="230" text-anchor="middle" class="node-sub">Bot API</text>
+
+        <!-- transport -->
+        <rect x="180" y="190" width="130" height="56" rx="8" class="node-box"></rect>
+        <text x="245" y="214" text-anchor="middle" class="node-title">transport</text>
+        <text x="245" y="230" text-anchor="middle" class="node-sub">bot.on / bot.command</text>
+
+        <!-- policy -->
+        <rect x="360" y="80" width="140" height="56" rx="8" class="node-box"></rect>
+        <text x="430" y="104" text-anchor="middle" class="node-title">policy</text>
+        <text x="430" y="120" text-anchor="middle" class="node-sub">gate() · access.json</text>
+
+        <!-- inbound -->
+        <rect x="360" y="190" width="140" height="56" rx="8" class="node-box accent"></rect>
+        <text x="430" y="214" text-anchor="middle" class="node-title">inbound</text>
+        <text x="430" y="230" text-anchor="middle" class="node-sub">handleInbound()</text>
+
+        <!-- poller -->
+        <rect x="360" y="300" width="140" height="56" rx="8" class="node-box"></rect>
+        <text x="430" y="324" text-anchor="middle" class="node-title">poller</text>
+        <text x="430" y="340" text-anchor="middle" class="node-sub">tryBecomePoller()</text>
+
+        <!-- store -->
+        <rect x="560" y="245" width="140" height="56" rx="8" class="node-box accent"></rect>
+        <text x="630" y="269" text-anchor="middle" class="node-title">store</text>
+        <text x="630" y="285" text-anchor="middle" class="node-sub">SQLite, 新增</text>
+
+        <!-- outbound -->
+        <rect x="560" y="135" width="140" height="56" rx="8" class="node-box"></rect>
+        <text x="630" y="159" text-anchor="middle" class="node-title">outbound</text>
+        <text x="630" y="175" text-anchor="middle" class="node-sub">reply / react / edit</text>
+
+        <!-- claude -->
+        <rect x="760" y="135" width="120" height="56" rx="8" class="node-box"></rect>
+        <text x="820" y="159" text-anchor="middle" class="node-title">Claude</text>
+        <text x="820" y="175" text-anchor="middle" class="node-sub">channel + MCP tools</text>
+
+        <!-- edges -->
+        <path d="M130,218 H180" class="flow-line" marker-end="url(#arrow)"></path>
+        <path d="M245,190 V163 H360" class="flow-line" marker-end="url(#arrow)"></path>
+        <text x="290" y="182" class="flow-label">raw update</text>
+
+        <path d="M430,136 V190" class="flow-line" marker-end="url(#arrow)"></path>
+        <text x="452" y="165" class="flow-label">allow/drop</text>
+
+        <path d="M500,210 C540,210 540,255 560,266" class="flow-line accent" marker-end="url(#arrow-accent)"></path>
+        <text x="520" y="248" class="flow-label">log every msg</text>
+
+        <path d="M500,205 C700,180 700,160 760,163" class="flow-line accent" marker-end="url(#arrow-accent)"></path>
+        <text x="600" y="118" class="flow-label">notifications/claude/channel</text>
+
+        <path d="M820,191 V235 C820,270 700,270 700,272" class="flow-line" marker-end="url(#arrow)"></path>
+        <text x="700" y="300" class="flow-label" text-anchor="end">tool call</text>
+
+        <path d="M700,163 H760" class="flow-line" marker-end="url(#arrow)"></path>
+        <text x="730" y="150" class="flow-label" text-anchor="middle">send</text>
+
+        <path d="M630,191 V245" class="flow-line accent" marker-end="url(#arrow-accent)"></path>
+        <text x="652" y="220" class="flow-label">log sent</text>
+
+        <path d="M430,246 V300" class="flow-line" marker-end="url(#arrow)"></path>
+        <text x="452" y="278" class="flow-label">bot.pid</text>
+
+        <path d="M245,246 C245,330 360,330 360,328" class="flow-line" marker-end="url(#arrow)"></path>
+        <text x="250" y="345" class="flow-label">bot.start()</text>
+      </svg>
+    </div>
+
+    <div class="module-grid">
+      <div class="module-card">
+        <span class="tag">現有</span>
+        <h3>transport</h3>
+        <p>只做一件事: 把 grammY 的原始事件轉成一個型別化的 InboundUpdate, 交給 inbound. 不含任何判斷邏輯.</p>
+        <div class="moves-from">來自 bot.command × 3, bot.on × 9</div>
+      </div>
+      <div class="module-card">
+        <span class="tag">現有</span>
+        <h3>policy</h3>
+        <p>access.json 的讀寫, gate(), isMentioned(), pairing 流程. 今晚柯柯 regex 那個 bug 就長在這裡, 拆開後這個模組可以獨立寫單元測試, 不必啟動真的 bot.</p>
+        <div class="moves-from">gate · dmCommandGate · isMentioned · checkApprovals · pruneExpired</div>
+      </div>
+      <div class="module-card">
+        <span class="tag">新增職責</span>
+        <h3>inbound</h3>
+        <p>handleInbound 瘦身後只剩協調: 呼叫 policy 判斷, 通過就 (1) 寫進 store (2) 送 channel 通知. 不通過也要寫進 store, 只是標記 delivered=false, 這樣就補上今晚發現的「丟棄不留痕」缺口.</p>
+        <div class="moves-from">handleInbound · safeName</div>
+      </div>
+      <div class="module-card">
+        <span class="tag">現有</span>
+        <h3>outbound</h3>
+        <p>4 個 MCP 工具與 chunk() 分段邏輯. reply / edit_message 送出後, 也把這則寫進 store, 讓歷史是雙向完整的.</p>
+        <div class="moves-from">CallToolRequestSchema handler · chunk</div>
+      </div>
+      <div class="module-card">
+        <span class="tag">現有</span>
+        <h3>poller</h3>
+        <p>PID 檔案, #5604 的合作式搶位, 我們自己加的 TELEGRAM_STANDBY_ONLY. 跟「誰能講話」完全無關, 只管「誰在跟 Telegram 排隊」, 拆開後未來要換掉排隊機制不會動到存取控制.</p>
+        <div class="moves-from">livePollerPid · tryBecomePoller · startPolling · shutdown</div>
+      </div>
+      <div class="module-card">
+        <span class="tag">新增</span>
+        <h3>store</h3>
+        <p>唯一碰 SQLite 檔案的模組, 對外只開放 record() 和 lookup() 兩個函式, 其他模組不直接碰資料庫.</p>
+        <div class="moves-from">全新, 見下一節</div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <span class="num-tag">03 / 延伸方向</span>
+    <h2>讓 inbound 不必只認得 Claude Code</h2>
+    <p class="todo-badge">TODO · 尚未排進施工順序</p>
+    <p class="lede" style="margin-top:14px">現在 inbound 判斷完一則訊息該不該送之後, 只有一條路可以走: 呼叫 mcp.notification 送一個 claude/channel 通知, 這條路綁死在跟 Claude Code 之間那條 MCP stdio 連線上. 收到之後要不要理, 理了要怎麼呈現, 完全是對方自己的規矩, 這支程式管不到也看不到, 它只負責喊話. 這不是這支程式天生綁死 Claude Code, 只是「喊話要對著哪個頻道」目前寫死成一種.</p>
+
+    <div class="codeblock" style="margin-top:20px">
+      <div class="label">構想: 把送出去那一步換成介面</div>
+      <pre>interface InboundSink {
+  emit(event: InboundEvent): void | Promise&lt;void&gt;
+}
+<span class="added">// handleInbound 判斷邏輯完全不變, 只是最後一步
+// 從寫死呼叫 mcp.notification, 換成呼叫 sink.emit(event)</span></pre>
+    </div>
+
+    <div class="module-grid" style="margin-top:20px">
+      <div class="module-card">
+        <span class="tag">現行</span>
+        <h3>McpChannelSink</h3>
+        <p>就是現在這條路, 送 notifications/claude/channel, 只有 Claude Code 這種真的用 MCP protocol 對話的 client 聽得到.</p>
+      </div>
+      <div class="module-card">
+        <span class="tag todo">構想</span>
+        <h3>HttpWebhookSink</h3>
+        <p>POST 到指定的網址, 任何能收 HTTP 的東西都能接, 不限定是不是 agent harness.</p>
+      </div>
+      <div class="module-card">
+        <span class="tag todo">構想</span>
+        <h3>StdioLineSink</h3>
+        <p>本機吐一行 JSON 給同機的小程式讀, 比 HTTP 更省, 最適合輕量自製 harness+LLM 這種單機小迴圈.</p>
+      </div>
+      <div class="module-card">
+        <span class="tag todo">構想</span>
+        <h3>QueueSink</h3>
+        <p>丟進 Redis / SQS 之類, 給非同步, 多消費者的場景, 優先度最低.</p>
+      </div>
+    </div>
+
+    <p style="margin-top:18px; color:var(--ink-soft); font-size:13.8px">outbound 那四個 MCP 工具也是同樣的問題換個角度: 現在包成 MCP tool 是因為 Claude Code 這種 agent 靠工具呼叫運作, 但輕量自製 harness 不需要這層協議開銷, 直接呼叫函式送訊息就好. 真正要拆的是「跟 Telegram 對話的核心邏輯」跟「暴露給呼叫者的介面」這兩層, policy / inbound / poller / store 這些核心邏輯完全可以原封不動被其他 harness 重用.</p>
+  </section>
+
+  <section>
+    <span class="num-tag">04 / 小改動</span>
+    <h2>meta 補上被回覆訊息的 id</h2>
+    <p class="lede">Telegram 的原始更新其實會直接內附 reply_to_message 整個物件 (最近的訊息都有, 太舊的可能被省略), handleInbound 目前只用它的 username 判斷完就丟掉. 先把這個順手撿起來.</p>
+    <div class="codecompare">
+      <div class="codeblock">
+        <div class="label">現在, server.ts:940</div>
+        <pre>meta: {
+  chat_id,
+  message_id: String(msgId),
+  user: from.username ?? String(from.id),
+  user_id: String(from.id),
+  ts: ...,
+}</pre>
+      </div>
+      <div class="codeblock">
+        <div class="label">改動後</div>
+        <pre>meta: {
+  chat_id,
+  message_id: String(msgId),
+  user: from.username ?? String(from.id),
+  user_id: String(from.id),
+  ts: ...,
+<span class="added">  ...(replyTo ? {
+    reply_to_message_id: String(replyTo.message_id),
+    reply_to_text: truncate(
+      replyTo.text ?? replyTo.caption, 200),
+  } : {}),</span>
+}</pre>
+      </div>
+    </div>
+    <div class="gapcallout">
+      <span class="dot"></span>
+      <span><b>已知限制:</b> Telegram 不保證太舊的訊息會內附完整 reply_to_message, 遇到只有 id 沒有文字的情況, 就要靠下一節的 store 回頭查, 這也是為什麼這兩項要一起做.</span>
+    </div>
+  </section>
+
+  <section>
+    <span class="num-tag">05 / 主要功能</span>
+    <h2>用 SQLite 記住每一則訊息</h2>
+    <p class="lede">bun 內建 bun:sqlite, 不用加依賴. 寫入時機定在 inbound 判斷之前 (不論放不放行都記), 跟 outbound 送出之後, 兩邊都寫進同一張表, 用 (chat_id, message_id) 建索引, 對應你要的「必要時回頭查閱理解上下文」。</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>欄位</th><th>型別</th><th>說明</th></tr></thead>
+        <tbody>
+          <tr><td class="mono pk">id</td><td class="mono">INTEGER PK</td><td>自增流水號</td></tr>
+          <tr><td class="mono">chat_id</td><td class="mono">TEXT</td><td>與 index 一起用</td></tr>
+          <tr><td class="mono">message_id</td><td class="mono">TEXT</td><td>Telegram 原生 id, 與 chat_id 合成唯一索引</td></tr>
+          <tr><td class="mono">direction</td><td class="mono">TEXT</td><td>in / out</td></tr>
+          <tr><td class="mono">user_id</td><td class="mono">TEXT</td><td>發送者 (out 則是 bot 自己)</td></tr>
+          <tr><td class="mono">ts</td><td class="mono">TEXT</td><td>ISO8601 UTC</td></tr>
+          <tr><td class="mono">content</td><td class="mono">TEXT</td><td>文字本體</td></tr>
+          <tr><td class="mono">reply_to_message_id</td><td class="mono">TEXT NULL</td><td>沿用上一節的欄位</td></tr>
+          <tr><td class="mono">attachment_kind / file_id</td><td class="mono">TEXT NULL</td><td>沿用現有 AttachmentMeta</td></tr>
+          <tr><td class="mono">delivered</td><td class="mono">INTEGER</td><td>0/1, 是否通過 gate() 送進 Claude</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="margin-top:18px">配一個新的 MCP 工具 <code>lookup_message</code>: 帶 chat_id + message_id 查單筆 (拿來補 reply_to_text 沒帶到的情況), 或帶 chat_id + limit 查最近幾筆當作補充脈絡, index 走 <code>UNIQUE(chat_id, message_id)</code>, 查詢都是 O(1) 等級.</p>
+    <div class="gapcallout">
+      <span class="dot"></span>
+      <span><b>順便解掉今晚的另一個缺口:</b> delivered=0 的那些也存, 之後查「這則訊息到底有沒有被丟棄, 為什麼」不用再靠猜的.</span>
+    </div>
+  </section>
+
+  <section>
+    <span class="num-tag">06 / 順序</span>
+    <h2>四個階段, 有前後依賴</h2>
+    <div class="phases">
+      <div class="phase">
+        <div class="pnum">1</div>
+        <div>
+          <h3>拆出 policy 跟 poller 兩個模組</h3>
+          <p>純搬移, 不改行為. 拆完先跑 test/poller-lifecycle.test.ts 加手動雙 session 驗證, 確定跟今晚驗過的行為一致再繼續.</p>
+          <span class="risk">風險低 · 純重構</span>
+        </div>
+      </div>
+      <div class="phase">
+        <div class="pnum">2</div>
+        <div>
+          <h3>meta 加 reply_to_message_id</h3>
+          <p>獨立, 不依賴拆分, 可以最快先上. 只動 inbound 這一小段.</p>
+          <span class="risk">風險低 · 範圍小</span>
+        </div>
+      </div>
+      <div class="phase">
+        <div class="pnum">3</div>
+        <div>
+          <h3>store 模組 + 雙向寫入 + lookup_message 工具</h3>
+          <p>工程量最大的一塊. 建議先只記錄不查詢上線觀察幾天, 確定寫入不影響 inbound 延遲, 再開放 lookup_message 工具給 Claude 用.</p>
+          <span class="risk">風險中 · 新增依賴新資料表</span>
+        </div>
+      </div>
+      <div class="phase">
+        <div class="pnum">4</div>
+        <div>
+          <h3>inbound 補查: reply_to_text 缺失時查 store</h3>
+          <p>依賴第 2 跟第 3 階段都上線. 把「Telegram 沒內附」跟「store 查得到」串起來, 這時回覆訊息的原文查詢才算真正補完整.</p>
+          <span class="risk">風險低 · 收尾</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <span>草案版本 1</span>
+    <span class="mono">/x/code/claude-telegram/plan.html</span>
+    <span>依據 commit e0857c4 · 5ea82f5 · 510dbaa 整理</span>
+  </footer>
+
+</div>
+</body>
+</html>

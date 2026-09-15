@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>Telegram Bridge Guardrails</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root{
+    --bg:#f5f6f2; --surface:#ffffff; --surface-2:#eceee7; --ink:#1a231e; --ink-soft:#55655a;
+    --line:#d8dcd2; --accent:#1c8a6c; --accent-ink:#0d3f31; --accent-soft:#dcefe7;
+    --warn:#b3541c; --warn-soft:#f5e6d8; --danger:#a6382c; --danger-soft:#f6e1dc;
+    --shadow: 0 1px 2px rgba(26,35,30,.06), 0 6px 20px rgba(26,35,30,.05);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#10140f; --surface:#171d16; --surface-2:#1e2620; --ink:#e8ece4; --ink-soft:#a6b0a0;
+      --line:#2b342a; --accent:#4fd3a8; --accent-ink:#bdf3e0; --accent-soft:#16332a;
+      --warn:#e0a25c; --warn-soft:#3a2a18; --danger:#e2897c; --danger-soft:#3a1e1a;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#10140f; --surface:#171d16; --surface-2:#1e2620; --ink:#e8ece4; --ink-soft:#a6b0a0;
+    --line:#2b342a; --accent:#4fd3a8; --accent-ink:#bdf3e0; --accent-soft:#16332a;
+    --warn:#e0a25c; --warn-soft:#3a2a18; --danger:#e2897c; --danger-soft:#3a1e1a;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.35);
+  }
+  *{box-sizing:border-box}
+  body{margin:0; background:var(--bg); color:var(--ink); font-family:'IBM Plex Sans',system-ui,"Noto Sans TC",sans-serif; padding:0 20px; padding-block:56px;}
+  .wrap{max-width:900px; margin:0 auto;}
+  h1,h2,h3{font-family:'IBM Plex Serif',Georgia,serif; text-wrap:balance; font-weight:600; margin:0;}
+  code,.mono{font-family:'IBM Plex Mono',ui-monospace,monospace;}
+  a{color:var(--accent);}
+  .eyebrow{font-family:'IBM Plex Mono',monospace; font-size:12.5px; letter-spacing:.09em; text-transform:uppercase; color:var(--accent-ink); background:var(--accent-soft); display:inline-block; padding:4px 10px; border-radius:3px; margin-bottom:18px;}
+  header h1{font-size:clamp(26px,4vw,36px); line-height:1.18; max-width:22ch;}
+  .subtitle{color:var(--ink-soft); font-size:16.5px; line-height:1.6; margin-top:14px; max-width:62ch;}
+  .metarow{display:flex; flex-wrap:wrap; gap:10px 28px; margin-top:24px; padding-top:18px; border-top:1px solid var(--line); font-size:13px; color:var(--ink-soft);}
+  .metarow b{color:var(--ink); font-weight:500;}
+  section{margin-top:56px;}
+  .num-tag{font-family:'IBM Plex Mono',monospace; font-size:13px; color:var(--ink-soft);}
+  h2{font-size:21px; margin-top:6px;}
+  .lede{color:var(--ink-soft); margin-top:10px;}
+  p{line-height:1.7;}
+  p+p{margin-top:12px;}
+
+  .principle{display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:14px; margin-top:22px;}
+  .pcard{background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:16px 18px; box-shadow:var(--shadow);}
+  .pcard .k{font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.05em; text-transform:uppercase; color:var(--accent-ink);}
+  .pcard p{font-size:13.6px; color:var(--ink-soft); margin-top:6px;}
+
+  .suite{margin-top:26px; border:1px solid var(--line); border-radius:12px; background:var(--surface); box-shadow:var(--shadow); overflow:hidden;}
+  .suite-head{display:flex; align-items:center; justify-content:space-between; gap:12px; padding:16px 20px; border-bottom:1px solid var(--line); background:var(--surface-2); flex-wrap:wrap;}
+  .suite-head h3{font-size:16.5px;}
+  .suite-head .target{font-family:'IBM Plex Mono',monospace; font-size:12px; color:var(--ink-soft); margin-top:4px;}
+  .prio{font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.05em; padding:3px 9px; border-radius:3px; white-space:nowrap;}
+  .prio.p0{background:var(--danger-soft); color:var(--danger);}
+  .prio.p1{background:var(--warn-soft); color:var(--warn);}
+  .prio.p2{background:var(--surface-2); color:var(--ink-soft); border:1px solid var(--line);}
+  .suite-body{padding:18px 20px;}
+  .why{font-size:13.8px; color:var(--ink-soft); line-height:1.65;}
+  .why b{color:var(--ink); font-weight:500;}
+  .caselist{margin-top:14px; overflow-x:auto;}
+  table{border-collapse:collapse; width:100%; font-size:13px; min-width:520px;}
+  th,td{text-align:left; padding:8px 12px; border-bottom:1px solid var(--line); vertical-align:top;}
+  th{font-family:'IBM Plex Mono',monospace; font-size:10.5px; letter-spacing:.05em; text-transform:uppercase; color:var(--ink-soft); background:var(--surface-2);}
+  td.mono{font-size:12px;}
+  tr:last-child td{border-bottom:none;}
+  .expect{color:var(--accent-ink);}
+  .expect.no{color:var(--danger);}
+
+  .deferred{margin-top:24px; border:1px dashed var(--line); border-radius:10px; padding:16px 18px; font-size:13.6px; color:var(--ink-soft);}
+  .deferred b{color:var(--ink); font-weight:500;}
+
+  .blocker{display:flex; gap:12px; margin-top:22px; padding:16px 18px; background:var(--warn-soft); border:1px solid color-mix(in srgb, var(--warn) 35%, var(--line)); border-radius:10px; font-size:13.8px; color:var(--ink);}
+  .blocker .dot{width:8px; height:8px; border-radius:50%; background:var(--warn); flex:none; margin-top:6px;}
+
+  footer{margin-top:64px; padding-top:18px; border-top:1px solid var(--line); font-size:12.5px; color:var(--ink-soft); display:flex; flex-wrap:wrap; gap:6px 20px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <span class="eyebrow">測試規劃 · claude-telegram fork</span>
+    <h1>先補會咬人的洞, 不補規格書</h1>
+    <p class="subtitle">現況盤點加四組測試建議, 每一組都對應一個真的會出事的理由, 不是為了測試覆蓋率湊數字. 排序以「今晚已經證實會壞」跟「壞了會造成什麼後果」為準, 不是函式清單從頭測到尾.</p>
+    <div class="metarow">
+      <div><b>現有測試</b> <span class="mono">test/poller-lifecycle.test.ts</span>, 2 條</div>
+      <div><b>其餘涵蓋率</b> 0%</div>
+      <div><b>配套文件</b> <a href="https://claude.ai/artifact/8qAbFsDp7Vn3uhU1U79yF5">模組化 plan</a></div>
+    </div>
+  </header>
+
+  <section>
+    <span class="num-tag">01 / 判斷原則</span>
+    <h2>什麼值得寫測試</h2>
+    <div class="principle">
+      <div class="pcard">
+        <div class="k">會咬人</div>
+        <p>今晚柯柯的 mention regex 從設定當天就沒生效過, 沒人發現, 因為沒有任何測試會去跑那條 regex. 這種「壞了但沒人知道」的邏輯優先.</p>
+      </div>
+      <div class="pcard">
+        <div class="k">是安全邊界</div>
+        <p>gate() 決定誰的訊息能送進 Claude, 判斷錯的代價是未授權的人講話被聽進去, 或該聽的人被擋掉, 兩個方向都要測.</p>
+      </div>
+      <div class="pcard">
+        <div class="k">會靜默腐化</div>
+        <p>純文字輸出 (chunk 分段) 沒有回饋迴路, 壞了不會有人告訴你, 只會有一則訊息內容悄悄跑掉幾個字.</p>
+      </div>
+      <div class="pcard">
+        <div class="k">不夠格上榜</div>
+        <p>純粹重複宣告 Telegram API 型別, 或只是把 grammY 的 ctx 包一層轉呼叫的地方, 測了只是在測 grammY 本身.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <span class="num-tag">02 / 結構性前提</span>
+    <h2>這三個函式現在測不了</h2>
+    <p class="lede">gate() / isMentioned() / chunk() 都沒有被 export, server.ts 本身是一支有 top-level 副作用的 script, 一 import 就會建立 bot 並嘗試搶 poller. 現有的 poller-lifecycle.test.ts 是用 spawn 整個 process 繞過這點, 一條測試要等 process 真的啟動, 跑完兩條要 7 秒. gate/isMentioned 的分支數量比 poller 多得多, 照同樣的方式測, 一輪要跑十幾秒到幾十秒, 而且每個分支都要真的建立一個假的 Telegram Update 物件去戳 process 的 stdin, 又貴又間接.</p>
+    <div class="blocker">
+      <span class="dot"></span>
+      <span><b>前置工作:</b> 這四組測試裡, 前兩組 (mention / gate) 需要先把這幾個純函式抽出獨立檔案 (不用等整個六模組拆完, 只要 policy.ts 這一小塊), 抽出來之後單元測試是毫秒等級, 不用 spawn process. 這剛好是模組化 plan 第一階段的一部分, 建議測試優先於重構本身動手, 先靠測試把現有行為釘住, 再拆檔案, 比先拆完才補測試安全.</span>
+    </div>
+  </section>
+
+  <section>
+    <span class="num-tag">03 / 建議的四組測試</span>
+
+    <div class="suite">
+      <div class="suite-head">
+        <div><h3>mentionPatterns 是否真的觸發點名</h3><div class="target">isMentioned() · 需先抽成純函式</div></div>
+        <span class="prio p0">P0 · 今晚的真事故</span>
+      </div>
+      <div class="suite-body">
+        <p class="why"><b>為什麼:</b> 直接對應今晚發現的事故, ^柯柯\b 這種 pattern 在 Bun 的 JS regex 引擎裡因為 \b 不認 CJK 字元, 從設定當天起就沒生效過. 這組測試的唯一目的是: 給一段文字跟一組 pattern, 判斷結果符不符合預期, 用真正的 runtime (bun test 本身就是 bun) 執行, 不會再犯拿別的語言代測的錯.</p>
+        <div class="caselist"><table>
+          <thead><tr><th>輸入文字</th><th>pattern</th><th>預期</th><th>理由</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">柯柯 早安</td><td class="mono">^柯柯</td><td class="expect">觸發</td><td>開頭點名, 今晚修過的正確版</td></tr>
+            <tr><td class="mono">柯柯 早安</td><td class="mono">^柯柯\b</td><td class="expect no">不觸發</td><td>舊版壞掉的樣子, 這條測試存在的意義</td></tr>
+            <tr><td class="mono">嗨嗨 柯柯</td><td class="mono">^柯柯</td><td class="expect no">不觸發</td><td>點名詞不在開頭, 設計如此</td></tr>
+            <tr><td class="mono">cc 早安</td><td class="mono">^cc\b</td><td class="expect">觸發</td><td>ASCII 邊界正常運作</td></tr>
+            <tr><td class="mono">ccxxx 早安</td><td class="mono">^cc\b</td><td class="expect no">不觸發</td><td>\b 對 ASCII 有效, 防止誤觸發</td></tr>
+            <tr><td class="mono">(任意文字)</td><td class="mono">— reply_to_message.from = bot</td><td class="expect">觸發</td><td>回覆機器人視同點名, 與 regex 無關的另一條路徑</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <div class="suite">
+      <div class="suite-head">
+        <div><h3>gate() 的放行 / 丟棄矩陣</h3><div class="target">gate() · 需先抽成純函式</div></div>
+        <span class="prio p0">P0 · 安全邊界</span>
+      </div>
+      <div class="suite-body">
+        <p class="why"><b>為什麼:</b> 這是唯一決定「誰的話會被送進 Claude Code」的邏輯. 測試目的不是窮舉每個欄位組合, 是釘住幾個真正有後果的邊界: 不在名單的人講話會不會被放行 (太寬鬆 = 安全問題), 該放行的會不會被誤擋 (太嚴格 = 功能壞掉, 今晚也真的發生過).</p>
+        <div class="caselist"><table>
+          <thead><tr><th>情境</th><th>預期 action</th></tr></thead>
+          <tbody>
+            <tr><td>私訊, sender 在 allowFrom</td><td class="expect">deliver</td></tr>
+            <tr><td>私訊, sender 不在 allowFrom, dmPolicy=allowlist</td><td class="expect no">drop</td></tr>
+            <tr><td>私訊, sender 不在名單, dmPolicy=pairing, 無 pending</td><td class="expect">pair (新配對碼)</td></tr>
+            <tr><td>私訊, 已有 pending 配對, 第 3 次詢問</td><td class="expect no">drop (超過 2 次提醒上限)</td></tr>
+            <tr><td>群組, groupId 不在 access.groups</td><td class="expect no">drop</td></tr>
+            <tr><td>群組, groupAllowFrom 非空且 sender 不在其中</td><td class="expect no">drop, 不管有沒有點名</td></tr>
+            <tr><td>群組, requireMention=true, 訊息有點名</td><td class="expect">deliver</td></tr>
+            <tr><td>群組, requireMention=true, 訊息沒點名</td><td class="expect no">drop</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <div class="suite">
+      <div class="suite-head">
+        <div><h3>chunk() 不能切斷字元, 不能超過上限</h3><div class="target">chunk() · 現有函式已可直接測</div></div>
+        <span class="prio p1">P1 · 靜默腐化</span>
+      </div>
+      <div class="suite-body">
+        <p class="why"><b>為什麼:</b> 兩個具體風險, 都讀原始碼就看得出來, 不是假設性的. 一是 rest.slice(0, cut) 用的是 UTF-16 code unit 索引, 如果切點剛好落在一個 surrogate pair 中間 (常見於某些 emoji), 會把一個字元切成兩半, 兩邊都變成不合法字元. 二是純長度模式沒有任何上限保護, 若呼叫端傳一個超大 limit, 沒有防呆.</p>
+        <div class="caselist"><table>
+          <thead><tr><th>情境</th><th>預期</th></tr></thead>
+          <tbody>
+            <tr><td>文字長度剛好等於 limit</td><td class="expect">回傳單一區塊, 不觸發分段</td></tr>
+            <tr><td>文字比 limit 長 1, mode=length</td><td class="expect">分成兩塊, 每塊都 ≤ limit</td></tr>
+            <tr><td>mode=newline, 切點前有段落換行</td><td class="expect">優先在段落邊界切, 不是硬切在 limit</td></tr>
+            <tr><td>硬切點剛好落在 emoji (surrogate pair) 中間</td><td class="expect">切點前移, 兩塊都不含孤立的半個字元</td></tr>
+            <tr><td>所有分段接回去</td><td class="expect">與原文字完全相等 (無遺失無重複)</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <div class="suite">
+      <div class="suite-head">
+        <div><h3>pruneExpired() 的 pairing 逾期</h3><div class="target">pruneExpired() · 需先抽成純函式</div></div>
+        <span class="prio p2">P2 · 低風險, 順手補</span>
+      </div>
+      <div class="suite-body">
+        <p class="why"><b>為什麼:</b> 邏輯單純 (單一 TTL 比對), 出錯後果也小 (頂多配對碼晚一點失效), 一條測試釘住「過期會被清掉, 沒過期不會」就夠, 不必展開.</p>
+      </div>
+    </div>
+
+  </section>
+
+  <section>
+    <span class="num-tag">04 / 明確不做</span>
+    <div class="deferred">
+      <p><b>bot.on 的各種訊息 handler (text/photo/document/…) 與 MCP CallToolRequestSchema</b> 暫不寫測試. 這些主要是把 grammY 的 ctx 轉呼叫 handleInbound / Telegram API, 要嘛需要真的打 Telegram 的網路請求, 要嘛要建一整套假的 grammY Context 物件, 兩種成本都高, 而且測到的多半是 grammY 或 Telegram API 本身的行為, 不是這支程式自己的邏輯. 等模組化把 handleInbound 拆成純粹的協調邏輯 (輸入一個已解析的 InboundUpdate, 呼叫 policy, 呼叫 sink) 之後, 這塊會自然變得好測, 現在硬測不划算.</p>
+    </div>
+  </section>
+
+  <footer>
+    <span>測試規劃 版本 1</span>
+    <span class="mono">/x/code/claude-telegram/test-plan.html</span>
+    <span>配套: 模組化 plan (同一 repo)</span>
+  </footer>
+
+</div>
+</body>
+</html>
