@@ -92,6 +92,27 @@ export function createHandleInbound(deps: InboundDeps) {
     // missing, so these have to stand on their own, defensively.
     const chatIdForStore = ctx.chat ? String(ctx.chat.id) : undefined
     const msgIdForStore = ctx.message?.message_id
+
+    // Cross-transport dedup, here rather than in any one transport: once
+    // Bot-to-Bot Communication Mode is enabled, the SAME message can arrive
+    // through both the Bot API poller (transport.ts) and this plugin's own
+    // MTProto listener (mtproto.ts) — whichever gets here first wins, the
+    // second arrival is silently dropped before gate() or a notification
+    // ever happens. Found live (2026-09-15, Cojad): a message from another
+    // bot triggered two separate notifications to Claude, once tagged
+    // meta.mtproto="true" and once without it — MTProto's own onEvent had a
+    // dedup check, but nothing equivalent existed on the Bot API side, so
+    // it always went through unconditionally. This check now covers both
+    // (and any future third transport) in one place instead of asking each
+    // transport to reimplement it.
+    if (chatIdForStore && msgIdForStore != null) {
+      try {
+        if (store.lookup(chatIdForStore, String(msgIdForStore))) return
+      } catch (err) {
+        process.stderr.write(`telegram channel: store.lookup (dedup check) failed: ${err}\n`)
+      }
+    }
+
     const tsForStore = new Date((ctx.message?.date ?? 0) * 1000).toISOString()
     let replyMeta = buildReplyMeta(
       ctx.message?.reply_to_message as

@@ -99,6 +99,17 @@ function ctxFor(overrides: { message_id: number; date?: number; text?: string; r
   } as unknown as Context
 }
 
+test('handleInbound skips a (chat_id, message_id) that is already in the store — cross-transport dedup', async () => {
+  const { handleInbound, notifications, recorded } = harness(
+    { action: 'deliver', access: accessAllowingEveryone() },
+    { '1:1': { chat_id: '1', message_id: '1', direction: 'in', ts: '2026-09-15T00:00:00.000Z', delivered: true } },
+  )
+  const ctx = ctxFor({ message_id: 1 })
+  await handleInbound(ctx, 'already seen via the other transport', undefined)
+  expect(notifications).toHaveLength(0)
+  expect(recorded).toHaveLength(0) // not even a second store.record() call
+})
+
 test('handleInbound marks meta.mtproto="true" when the context came from the MTProto listener', async () => {
   const { handleInbound, notifications } = harness({ action: 'deliver', access: accessAllowingEveryone() })
   const ctx = ctxFor({ message_id: 1, mtproto: true })
@@ -220,7 +231,12 @@ test('reply_to_text stays absent when neither Telegram nor the store has it — 
   expect('reply_to_text' in meta).toBe(false)
 })
 
-test('Telegram-inlined reply_to_text is used as-is, without ever consulting the store', async () => {
+test('Telegram-inlined reply_to_text is used as-is, without an extra store consult for the fallback', async () => {
+  // store.lookup() is called exactly once now — the cross-transport dedup
+  // check at the top of handleInbound (unconditional, every message). What
+  // this test actually guards: reply_to_text being already inlined means
+  // the *second*, reply-fallback lookup (further down, only when Telegram
+  // didn't inline it) must NOT also fire — so this stays at 1, not 2.
   let lookupCalls = 0
   const deps: InboundDeps = {
     gate: () => ({ action: 'deliver', access: accessAllowingEveryone() }),
@@ -233,7 +249,7 @@ test('Telegram-inlined reply_to_text is used as-is, without ever consulting the 
 
   await handleInbound(ctx, 'my answer', undefined)
 
-  expect(lookupCalls).toBe(0)
+  expect(lookupCalls).toBe(1)
 })
 
 test('a store.lookup failure during the reply fallback never blocks delivery', async () => {

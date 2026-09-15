@@ -175,8 +175,11 @@ export function createMtprotoListener(deps: MtprotoDeps) {
       if (!chatIdBig || !senderIdBig) return
       const chatId = chatIdBig.toString()
 
-      // Dedup against the same log the Bot API path writes to — belt and
-      // suspenders alongside the is-bot-only scoping above.
+      // Early-exit optimization, not the only line of defense: handleInbound()
+      // (inbound.ts) now does this same store.lookup() check itself, as the
+      // single authoritative cross-transport dedup point — this one just
+      // skips the extra getReplyMessage()/getSender() work below for a
+      // message we already know would be dropped there anyway.
       if (store.lookup(chatId, String(message.id))) return
 
       const replyToMessage = message.replyTo ? await message.getReplyMessage().catch(() => undefined) : undefined
