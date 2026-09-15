@@ -173,14 +173,14 @@
 <div class="wrap">
 
   <header>
-    <span class="eyebrow">草案 · claude-telegram fork</span>
+    <span class="eyebrow">四階段全部完成 · claude-telegram fork</span>
     <h1>把 server.ts 拆成六個各司其職的模組</h1>
-    <p class="subtitle">目前一支 1109 行的檔案同時是傳輸層, 存取政策, 收發管線, 跟 Telegram 排隊的接線員. 這份草案提出拆分方式, 並加兩個具體功能: meta 補上被回覆訊息的 id, 以及用 SQLite 記下每一則進出的訊息, 讓事後可以依 chat_id + message_id 查回上下文.</p>
+    <p class="subtitle">原本一支 1109 行的檔案同時是傳輸層, 存取政策, 收發管線, 跟 Telegram 排隊的接線員. 這份文件原本是拆分提案, 2026-09-15 同一晚四個階段都做完了: 拆成六個模組, meta 補上被回覆訊息的 id, 用 SQLite 記下每一則進出的訊息讓事後能依 chat_id + message_id 查回上下文, 以及缺 reply_to_text 時自動去查. 第三節那個 TODO (inbound 抽象化) 仍未排時程.</p>
     <div class="metarow">
       <div><b>Repo</b> <span class="mono">/x/code/claude-telegram</span></div>
       <div><b>基準 commit</b> <span class="mono">510dbaa</span></div>
       <div><b>上游</b> claude-plugins-official / external_plugins/telegram v0.0.7</div>
-      <div><b>狀態</b> 草案, 尚未動工</div>
+      <div><b>狀態</b> 四階段完成, bun test 55 條全過, 尚未部署到正式 channel</div>
     </div>
   </header>
 
@@ -465,15 +465,21 @@
           <span class="risk done">已完成 · 51 條測試全過</span>
         </div>
       </div>
-      <div class="phase">
+      <div class="phase done">
         <div class="pnum">4</div>
         <div>
-          <h3>inbound 補查: reply_to_text 缺失時查 store</h3>
-          <p>依賴第 2 跟第 3 階段都上線. 把「Telegram 沒內附」跟「store 查得到」串起來, 這時回覆訊息的原文查詢才算真正補完整.</p>
-          <span class="risk">風險低 · 收尾</span>
+          <h3>inbound 補查: reply_to_text 缺失時查 store — 完成</h3>
+          <p>只在 Telegram 沒內附文字時才查, 有內附就不碰資料庫 (有測試專門斷言這點, 確保沒有多餘查詢). 查詢失敗一樣不擋正常送達. 四個階段全部完成, bun test 55 條全過.</p>
+          <span class="risk done">已完成 · 收尾</span>
         </div>
       </div>
     </div>
+  </section>
+
+  <section>
+    <span class="num-tag">07 / 現況</span>
+    <h2>四階段全部完成</h2>
+    <p class="lede">2026-09-15 同一晚做完. 六個模組, reply_to meta, SQLite 訊息紀錄與自動補查, 全程測試先行, 過程中抓到並修好兩個真的存在的 bug (chunk() 的 emoji 切字元問題, 拆 outbound 時誤刪 mcp.connect()). bun test 最終 55 條全過. 還沒動的只剩第三節那個標 TODO, 沒排時程的 inbound sink 抽象化, 跟 §03 提到的 mentionPatterns 驗證機制. 這個 fork 目前仍只在本機, 沒有部署到正式 channel.</p>
   </section>
 
   <footer>
