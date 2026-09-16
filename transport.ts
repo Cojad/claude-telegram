@@ -202,12 +202,18 @@ export function registerTransport(deps: TransportDeps): void {
 
   bot.on('message:photo', async ctx => {
     const caption = ctx.message.caption ?? '(photo)'
-    // Defer download until after the gate approves — any user can send photos,
-    // and we don't want to burn API quota or fill the inbox for dropped messages.
+    // Largest size is last in the array.
+    const photos = ctx.message.photo
+    const best = photos[photos.length - 1]
+    // Eager download is deferred until after the gate approves — any user
+    // can send photos, and we don't want to burn API quota or fill the
+    // inbox for dropped messages. file_id itself is recorded unconditionally
+    // via the attachment param below, same as every other media type
+    // (document/voice/audio/video/sticker already worked this way) — found
+    // live (2026-09-16, Cojad): an undelivered photo had no file_id on
+    // record at all, so unlike those other types it could never be fetched
+    // later via download_attachment once the moment passed.
     await handleInbound(ctx, caption, async () => {
-      // Largest size is last in the array.
-      const photos = ctx.message.photo
-      const best = photos[photos.length - 1]
       try {
         const file = await ctx.api.getFile(best.file_id)
         if (!file.file_path) return undefined
@@ -223,6 +229,10 @@ export function registerTransport(deps: TransportDeps): void {
         process.stderr.write(`telegram channel: photo download failed: ${err}\n`)
         return undefined
       }
+    }, {
+      kind: 'photo',
+      file_id: best.file_id,
+      size: best.file_size,
     })
   })
 

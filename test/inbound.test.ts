@@ -110,6 +110,24 @@ test('handleInbound skips a (chat_id, message_id) that is already in the store â
   expect(recorded).toHaveLength(0) // not even a second store.record() call
 })
 
+test('handleInbound records attachment_file_id even when gate() drops the message â€” so it can still be fetched later', async () => {
+  // Regression for the 2026-09-16 photo gap: transport.ts's message:photo
+  // handler didn't pass an attachment param at all (unlike document/voice/
+  // audio/video/sticker, which already did), so an undelivered photo had
+  // no file_id on record and could never be retrieved via
+  // download_attachment once the moment passed. This pins the general
+  // contract at the handleInbound level: whatever attachment metadata the
+  // caller passes in must reach store.record() regardless of gate()'s
+  // decision, not just for delivered messages.
+  const { handleInbound, recorded } = harness({ action: 'drop' })
+  const ctx = ctxFor({ message_id: 1 })
+  await handleInbound(ctx, '(photo)', undefined, { kind: 'photo', file_id: 'AgADabc123' })
+  expect(recorded).toHaveLength(1)
+  expect(recorded[0].delivered).toBe(false)
+  expect(recorded[0].attachment_kind).toBe('photo')
+  expect(recorded[0].attachment_file_id).toBe('AgADabc123')
+})
+
 test('handleInbound marks meta.rich_message="true" when the message is a Bot API Rich Message', async () => {
   const { handleInbound, notifications } = harness({ action: 'deliver', access: accessAllowingEveryone() })
   const ctx = ctxFor({ message_id: 1, richBlocks: [{ type: 'paragraph', text: 'hi' }] })

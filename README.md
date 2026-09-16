@@ -83,10 +83,17 @@ Inbound messages trigger a typing indicator automatically — Telegram shows
 
 ## Photos
 
-Inbound photos are downloaded to `~/.claude/channels/telegram/inbox/` and the
-local path is included in the `<channel>` notification so the assistant can
-`Read` it. Telegram compresses photos — if you need the original file, send it
-as a document instead (long-press → Send as File).
+Inbound photos that get delivered (see "Access control" above) are downloaded
+eagerly to `~/.claude/channels/telegram/inbox/`, and the local path is
+included in the `<channel>` notification so the assistant can `Read` it
+immediately, no extra tool call needed. Telegram compresses photos — if you
+need the original file, send it as a document instead (long-press → Send as
+File).
+
+The photo's `file_id` is also recorded regardless of whether the message gets
+delivered (2026-09-16 — previously it wasn't, unlike every other attachment
+type below), so `download_attachment` can still fetch an undelivered photo
+later once `lookup_message` surfaces its `file_id`.
 
 ## No history or search
 
@@ -94,9 +101,11 @@ Telegram's Bot API exposes **neither** message history nor search. The bot
 only sees messages as they arrive — no `fetch_messages` tool exists. If the
 assistant needs earlier context, it will ask you to paste or summarize.
 
-This also means there's no `download_attachment` tool for historical messages
-— photos are downloaded eagerly on arrival since there's no way to fetch them
-later.
+`download_attachment` (see "Tools exposed to the assistant" above) only ever
+fetches a `file_id` this plugin already recorded via `store.ts` — it cannot
+reach a message from before this plugin was running, or from a chat it was
+never a member of. `lookup_message` is how the assistant finds that `file_id`
+for a message it didn't have delivered at the time.
 
 ## Seeing messages from other bots
 
