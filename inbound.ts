@@ -93,18 +93,14 @@ export function createHandleInbound(deps: InboundDeps) {
     const chatIdForStore = ctx.chat ? String(ctx.chat.id) : undefined
     const msgIdForStore = ctx.message?.message_id
 
-    // Cross-transport dedup, here rather than in any one transport: once
-    // Bot-to-Bot Communication Mode is enabled, the SAME message can arrive
-    // through both the Bot API poller (transport.ts) and this plugin's own
-    // MTProto listener (mtproto.ts) — whichever gets here first wins, the
-    // second arrival is silently dropped before gate() or a notification
-    // ever happens. Found live (2026-09-15, Cojad): a message from another
-    // bot triggered two separate notifications to Claude, once tagged
-    // meta.mtproto="true" and once without it — MTProto's own onEvent had a
-    // dedup check, but nothing equivalent existed on the Bot API side, so
-    // it always went through unconditionally. This check now covers both
-    // (and any future third transport) in one place instead of asking each
-    // transport to reimplement it.
+    // Dedup on (chat_id, message_id) before gate() or a notification ever
+    // happens — guards against the same update reaching handleInbound
+    // twice (a poller redelivery, or any future second transport) turning
+    // into two separate notifications to Claude for one Telegram message.
+    // Originally added (2026-09-15) specifically for a two-transport case
+    // — this plugin's own now-removed MTProto listener racing the Bot API
+    // poller for the same message — but the check itself is general and
+    // worth keeping even with a single transport.
     if (chatIdForStore && msgIdForStore != null) {
       try {
         if (store.lookup(chatIdForStore, String(msgIdForStore))) return
@@ -132,8 +128,6 @@ export function createHandleInbound(deps: InboundDeps) {
           attachment_kind: attachment?.kind,
           attachment_file_id: attachment?.file_id,
           delivered,
-          raw: ctx.raw,
-          mtproto: ctx.mtproto,
           rich_message: ctx.message?.rich_message != null,
         })
       } catch (err) {
@@ -227,21 +221,11 @@ export function createHandleInbound(deps: InboundDeps) {
           user: from.username ?? String(from.id),
           user_id: String(from.id),
           ts: tsForStore,
-          // Which transport actually delivered this — absent (not "false")
-          // for the ordinary Bot API path. Cojad, 2026-09-15: wanted this
-          // visible after Bot-to-Bot Communication Mode turned out to make
-          // the Bot API path carry other-bot messages too, on top of this
-          // plugin's own separate MTProto listener (mtproto.ts) — without
-          // this flag there was no way to tell which one actually delivered
-          // a given message.
-          ...(ctx.mtproto ? { mtproto: 'true' } : {}),
-          // Same string-literal convention as mtproto above, not a bare
-          // boolean — every other field in this meta object is a string
-          // (String(msgId), String(attachment.size), ...), and the
-          // downstream consumer renders meta as <channel ...> tag
-          // attributes, which are strings regardless. Matching that keeps
-          // this the only object in the codebase without a mixed-type
-          // field, not just "because mtproto happened to do it first".
+          // String literal, not a bare boolean — every other field in this
+          // meta object is a string (String(msgId), String(attachment.size),
+          // ...), and the downstream consumer renders meta as <channel ...>
+          // tag attributes, which are strings regardless. Matching that
+          // keeps this the only uniformly-typed object in the codebase.
           ...(ctx.message?.rich_message ? { rich_message: 'true' } : {}),
           ...replyMeta,
           ...(imagePath ? { image_path: imagePath } : {}),

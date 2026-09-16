@@ -84,46 +84,46 @@ function harness(gateResult: GateResult, seeded: Record<string, MessageRecord> =
   return { handleInbound: createHandleInbound(deps), notifications, recorded }
 }
 
-function ctxFor(overrides: { message_id: number; date?: number; text?: string; reply_to_message?: unknown; from?: unknown; chat?: unknown; mtproto?: boolean }): Context {
+function ctxFor(overrides: { message_id: number; date?: number; text?: string; reply_to_message?: unknown; from?: unknown; chat?: unknown; richBlocks?: unknown[] }): Context {
   return {
     from: overrides.from ?? { id: 1, username: 'alice' },
     chat: overrides.chat ?? { id: 1 },
-    mtproto: overrides.mtproto,
     message: {
       message_id: overrides.message_id,
       date: overrides.date ?? 0,
       text: overrides.text,
       reply_to_message: overrides.reply_to_message,
+      rich_message: overrides.richBlocks ? { blocks: overrides.richBlocks } : undefined,
     },
     reply: async () => {},
   } as unknown as Context
 }
 
-test('handleInbound skips a (chat_id, message_id) that is already in the store — cross-transport dedup', async () => {
+test('handleInbound skips a (chat_id, message_id) that is already in the store — duplicate delivery guard', async () => {
   const { handleInbound, notifications, recorded } = harness(
     { action: 'deliver', access: accessAllowingEveryone() },
     { '1:1': { chat_id: '1', message_id: '1', direction: 'in', ts: '2026-09-15T00:00:00.000Z', delivered: true } },
   )
   const ctx = ctxFor({ message_id: 1 })
-  await handleInbound(ctx, 'already seen via the other transport', undefined)
+  await handleInbound(ctx, 'already seen', undefined)
   expect(notifications).toHaveLength(0)
   expect(recorded).toHaveLength(0) // not even a second store.record() call
 })
 
-test('handleInbound marks meta.mtproto="true" when the context came from the MTProto listener', async () => {
+test('handleInbound marks meta.rich_message="true" when the message is a Bot API Rich Message', async () => {
   const { handleInbound, notifications } = harness({ action: 'deliver', access: accessAllowingEveryone() })
-  const ctx = ctxFor({ message_id: 1, mtproto: true })
-  await handleInbound(ctx, 'hi from another bot', undefined)
+  const ctx = ctxFor({ message_id: 1, richBlocks: [{ type: 'paragraph', text: 'hi' }] })
+  await handleInbound(ctx, 'hi', undefined)
   const meta = notifications[0].params.meta as Record<string, unknown>
-  expect(meta.mtproto).toBe('true')
+  expect(meta.rich_message).toBe('true')
 })
 
-test('handleInbound omits meta.mtproto entirely for the ordinary Bot API path', async () => {
+test('handleInbound omits meta.rich_message entirely for a plain text message', async () => {
   const { handleInbound, notifications } = harness({ action: 'deliver', access: accessAllowingEveryone() })
-  const ctx = ctxFor({ message_id: 1 })
+  const ctx = ctxFor({ message_id: 1, text: 'hi from a human' })
   await handleInbound(ctx, 'hi from a human', undefined)
   const meta = notifications[0].params.meta as Record<string, unknown>
-  expect('mtproto' in meta).toBe(false)
+  expect('rich_message' in meta).toBe(false)
 })
 
 test('handleInbound includes reply_to_message_id/text/user_id in the notification meta when the message is a reply', async () => {

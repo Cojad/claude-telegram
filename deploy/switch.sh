@@ -27,7 +27,7 @@ VERSIONS="$HOME/.claude/channels/telegram-versions"
 MARKER="$LIVE/.deployed-version"
 # Every module file this script manages. server.ts exists in both profiles;
 # the rest only exist in "fork" (previous is the pre-split single file).
-MODULE_FILES=(server.ts policy.ts format.ts poller.ts outbound.ts transport.ts inbound.ts store.ts mtproto.ts rich.ts package.json bun.lock)
+MODULE_FILES=(server.ts policy.ts format.ts poller.ts outbound.ts transport.ts inbound.ts store.ts rich.ts package.json bun.lock)
 
 usage() { echo "usage: $(basename "$0") {fork|previous|status}" >&2; exit 1; }
 

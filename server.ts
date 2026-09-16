@@ -33,7 +33,6 @@ import { TOOL_DEFINITIONS, callTool } from './outbound'
 import { createHandleInbound } from './inbound'
 import { registerTransport } from './transport'
 import { openStore } from './store'
-import { createMtprotoListener } from './mtproto'
 
 const STATE_DIR = process.env.TELEGRAM_STATE_DIR
   ?? join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'), 'channels', 'telegram')
@@ -253,11 +252,10 @@ const poller = createPoller({
   onUsername: username => { botUsername = username },
 })
 process.stdin.on('end', () => poller.shutdown())
-const shutdownMtproto = () => { void mtproto?.stop().catch(() => {}) }
-process.stdin.on('close', () => { poller.shutdown(); shutdownMtproto() })
-process.on('SIGTERM', () => { poller.shutdown(); shutdownMtproto() })
-process.on('SIGINT', () => { poller.shutdown(); shutdownMtproto() })
-process.on('SIGHUP', () => { poller.shutdown(); shutdownMtproto() })
+process.stdin.on('close', () => poller.shutdown())
+process.on('SIGTERM', () => poller.shutdown())
+process.on('SIGINT', () => poller.shutdown())
+process.on('SIGHUP', () => poller.shutdown())
 
 // Orphan watchdog: belt-and-suspenders for the stdin 'end'/'close' handlers
 // above. Stdin is the MCP transport pipe inherited straight from the CLI; the
@@ -288,26 +286,5 @@ registerTransport({
 bot.catch(err => {
   process.stderr.write(`telegram channel: handler error (polling continues): ${err.error}\n`)
 })
-
-// Optional supplementary channel: sees messages from OTHER bots, which the
-// Bot API path above structurally cannot (see mtproto.ts's header comment,
-// including why the api_id/api_hash it uses is a publicly-known shared
-// pair, not a secret belonging to this deployment). Still opt-in — most
-// deployments of this plugin have no reason to want a second, independent
-// Telegram connection running — via TELEGRAM_MTPROTO_ENABLED, a plain
-// on/off flag, not a credential. Unset by default; existing deployments
-// are unaffected.
-let mtproto: ReturnType<typeof createMtprotoListener> | undefined
-if (process.env.TELEGRAM_MTPROTO_ENABLED === '1') {
-  mtproto = createMtprotoListener({
-    botToken: TOKEN,
-    sessionFile: join(STATE_DIR, 'mtproto.session'),
-    store,
-    handleInbound,
-  })
-  mtproto.start().catch(err => {
-    process.stderr.write(`telegram channel (mtproto): failed to start: ${err}\n`)
-  })
-}
 
 poller.boot()

@@ -83,23 +83,7 @@ here is my answer
 
 邏輯在 `inbound.ts` 的 `buildReplyMeta()`, 純函式, 見 `test/inbound.test.ts`.
 
-## 六之一, 來源標記: `mtproto`
-
-```xml
-<channel source="plugin:telegram:telegram" chat_id="-1001068509881" message_id="154270" user="BaldEagleBot" user_id="133770478" ts="2026-09-15T09:48:00.000Z" mtproto="true">
-some message
-</channel>
-```
-
-| 屬性 | 何時出現 |
-|---|---|
-| `mtproto` | 值固定是字串 `"true"`. 只在這則訊息是透過 `mtproto.ts` 那個補充監聽器(GramJS/MTProto)送進來時才有這個屬性; 一般 Bot API 路徑(grammY, 絕大多數訊息)完全不會有這個屬性, 不是「false」, 是屬性本身不存在. |
-
-**為什麼需要這個:** 2026-09-15 發現 Bot-to-Bot Communication Mode(BotFather 設定)這個較新功能一旦兩邊都開, Bot API 本身也會直接收到其他 bot 的訊息, 不再是 MTProto 監聽器獨有的能力. 這代表同一種「來自另一個 bot 的訊息」現在可能經由兩條完全不同的路徑送達, 沒有這個標記會分不清楚一則訊息實際是哪條路徑送進來的. 只依賴「這是不是 bot 發的」已經不夠用來反推來源了.
-
-邏輯在 `policy.ts` 的 `InboundContext.mtproto` 型別, `mtproto.ts` 的 `buildMtprotoContext()` 設值, `inbound.ts` 的 `handleInbound()` 讀出並塞進 `meta.mtproto`, 見 `test/inbound.test.ts` 跟 `test/mtproto.test.ts`.
-
-## 六之二, 來源標記: `rich_message`
+## 六之一, 來源標記: `rich_message`
 
 ```xml
 <channel source="plugin:telegram:telegram" chat_id="-1001068509881" message_id="154860" user="BaldEagleBot" user_id="133770478" ts="2026-09-16T04:07:47.000Z" rich_message="true">
@@ -109,23 +93,20 @@ some message
 
 | 屬性 | 何時出現 |
 |---|---|
-| `rich_message` | 值固定是字串 `"true"`, 跟 `mtproto` 同一個約定(不是 bare boolean, 因為 meta 物件裡其他每個欄位都是字串, 見下面第四節的 JSON 形狀). 只在這則訊息的內容原本是 Bot API 10.x 的 Rich Message(`message.rich_message.blocks`, 不是 `message.text`/`caption`)才有這個屬性. `content` 欄位此時已經是 `rich.ts` 攤平過的 Markdown 文字, 不是原始 block 結構. |
+| `rich_message` | 值固定是字串 `"true"`(meta 物件裡其他每個欄位都是字串, 見下面第四節的 JSON 形狀, 這裡保持一致). 只在這則訊息的內容原本是 Bot API 10.x 的 Rich Message(`message.rich_message.blocks`, 不是 `message.text`/`caption`)才有這個屬性. `content` 欄位此時已經是 `rich.ts` 攤平過的 Markdown 文字, 不是原始 block 結構. |
 
 **為什麼需要這個:** 2026-09-16 發現 OpenClaw 現在幾乎所有回覆(不只 `/status`, 連打招呼)都走 rich_message 格式. 攤平後的文字讀起來跟一般訊息沒有視覺差異, 但攤平是有損的(媒體 block 變成 `[photo]` 這種佔位符, 某些 inline mark 沒有乾淨的 Markdown 對應), 這個標記讓讀者知道「這段文字是重建出來的, 不是對方原始打的字」, 需要對照原始結構時知道要往哪個方向查.
 
 邏輯在 `policy.ts` 的 `InboundContext.message.rich_message` 型別, `transport.ts` 的 `bot.on('message:rich_message', ...)` handler 攤平內容, `inbound.ts` 的 `handleInbound()` 讀出並塞進 `meta.rich_message`, 見 `test/rich.test.ts` 跟 `test/policy.test.ts` 裡對應的 regression test.
 
-**跟 `lookup_message` 的關係:** `mtproto`/`rich_message` 從 2026-09-16 起也持久化進 `store.ts` 的 `messages` 表(各自一個 nullable `INTEGER` 欄位), `formatMessageRow` 會在 meta 方括號裡依序顯示 `mtproto`、`rich_message`、`raw`(有才顯示, 順序固定), 例如:
+**跟 `lookup_message` 的關係:** `rich_message` 從 2026-09-16 起也持久化進 `store.ts` 的 `messages` 表(一個 nullable `INTEGER` 欄位), `formatMessageRow` 會在 meta 方括號裡顯示(有才顯示), 例如:
 
 ```
 #154860 in  09-16 04:07:47 133770478  [undelivered, rich_message]
 **🦞 OpenClaw 2026.8.2**\n\n...
-
-#154847 in  09-16 04:01:59 133770478  [undelivered, mtproto, raw]
-(空, MessageMediaUnsupported)
 ```
 
-`raw` 的呈現邏輯不變(預設只顯示有無, `lookup_message` 查單一 `message_id` 才會把完整 raw 內容印出來), `mtproto`/`rich_message` 兩者一律直接顯示, 不像 `raw` 有 `includeRaw` 那道額外開關, 因為它們本身就只是短字串, 沒有「太長不該預設印出來」的問題.
+(這個repo曾經還有 `mtproto`/`raw` 兩個同類欄位, 2026-09-16 隨 MTProto 監聽器一起移除, 見第六節.)
 
 ## 四, 對應到原始碼: 實際送出的 JSON-RPC 通知
 
@@ -142,7 +123,6 @@ some message
       "user": "<username 或 user_id 字串>",
       "user_id": "<string>",
       "ts": "<ISO8601 UTC>",
-      "mtproto": "<固定字串 \"true\", 只在走 mtproto.ts 時才存在>",
       "rich_message": "<固定字串 \"true\", 只在原始內容是 Bot API 10.x Rich Message 時才存在>",
       "reply_to_message_id": "<string, 可選>",
       "reply_to_text": "<string, 可選, 最長 200 字元>",
@@ -183,3 +163,5 @@ some message
 目前 `bun test` 105 條全過(持續增加中, 不要照這個數字更新, 以實際跑出來的為準). 尚未實作 (不在原本四階段之內, 見 plan.html §03 的 TODO): 讓 inbound 不必只認得 Claude Code 的可插拔 sink 介面, 以及讓自訂的 `mentionPatterns` regex 在設定時就能被驗證 (避免像 CJK `\b` 那種從設定當天就失效卻沒人發現的坑再次發生).
 
 2026-09-16: CJK `\b` 那個坑本身(`^cc\b` 對 "cc，" 這種後面接全形標點的情況判斷失效)已經在 access.json 裡把 `mentionPatterns` 從 `["^柯柯", "^cc\\b"]` 改成 `["柯柯", "cc"]` 解決(柯姊指示: 不再要求開頭或邊界, 只要文字裡出現這兩個字串就算 mention, 換成更寬鬆但可靠的判斷). 但「設定時驗證 regex」這個系統性的 TODO 本身還沒做, 之後如果又設定了帶 `\b` 的 pattern, 一樣會複製這個坑.
+
+**MTProto 監聽器: 加入又移除(2026-09-15 → 2026-09-16).** `mtproto.ts`(GramJS 補充監聽器, 讓拍拍能看到其他 bot 的訊息)2026-09-15 加入, 2026-09-16 整個移除, 理由: (1) Bot-to-Bot Communication Mode(BotFather 設定)讓 Bot API 本身也能看到其他 bot 訊息, 原本的用途變得多餘; (2) 它完全解不了 Bot API 10.x 的 Rich Message, 收到的永遠是空殼(`MessageMediaUnsupported`); (3) 兩條 transport 並存時, MTProto 常常搶先進 dedup, 把它的空殼記錄下來, 反而擋掉 Bot API 那邊本來會正確攤平出的內容 — 這是一個真的 bug, 不是理論風險, 2026-09-16 當晚實測抓到. 連帶移除: `store.ts` 的 `raw`/`mtproto` 兩個欄位(`raw` 本來就只有 mtproto.ts 會填, 移除監聽器後永遠不會再有新資料)、`package.json` 的 `telegram`(GramJS)依賴、`TELEGRAM_MTPROTO_ENABLED` 這個 `.env` flag、對應的 session 檔案. 完整脈絡見 git history 的移除 commit, 或本節上方「六之一」小節現在只剩 `rich_message` 的原因.

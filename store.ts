@@ -28,19 +28,6 @@ export interface MessageRecord {
   attachment_file_id?: string
   /** Whether gate() actually delivered this to Claude. Always true for direction 'out'. */
   delivered: boolean
-  /** Raw, mostly-unparsed source data — currently only populated by
-   *  mtproto.ts, for debugging cases like "Rich Message" where the parsed
-   *  `content` came back empty/wrong but the underlying event carried more
-   *  than what buildMtprotoContext() currently extracts. JSON string;
-   *  shape depends entirely on which transport produced it, no fixed
-   *  schema. Cojad, 2026-09-15. */
-  raw?: string
-  /** Which transport actually delivered this — true only for mtproto.ts's
-   *  listener, absent (not `false`) for the ordinary Bot API path. Mirrors
-   *  the same flag already sent in the outbound notification's meta;
-   *  wasn't persisted here before 2026-09-16, so lookup_message had no way
-   *  to show it even though the live notification already carried it. */
-  mtproto?: boolean
   /** True if this message's content came from a Bot API 10.x Rich Message
    *  (rich_message.blocks) rather than a plain text/caption field — see
    *  rich.ts. Content itself is already flattened into `content` above;
@@ -64,8 +51,6 @@ interface MessageRow {
   attachment_kind: string | null
   attachment_file_id: string | null
   delivered: number
-  raw: string | null
-  mtproto: number | null
   rich_message: number | null
 }
 
@@ -81,8 +66,6 @@ function toRecord(row: MessageRow): MessageRecord {
     attachment_kind: row.attachment_kind ?? undefined,
     attachment_file_id: row.attachment_file_id ?? undefined,
     delivered: row.delivered === 1,
-    raw: row.raw ?? undefined,
-    mtproto: row.mtproto === 1,
     rich_message: row.rich_message === 1,
   }
 }
@@ -116,26 +99,36 @@ export function openStore(dbPath: string): Store {
     )
   `)
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_chat_msg ON messages(chat_id, message_id)')
-  // Migration for databases created before these columns existed — SQLite
-  // has no "ADD COLUMN IF NOT EXISTS", so this just tries each and
-  // swallows the "duplicate column" error on every boot after the first.
-  for (const ddl of [
-    'ALTER TABLE messages ADD COLUMN raw TEXT',
-    'ALTER TABLE messages ADD COLUMN mtproto INTEGER',
-    'ALTER TABLE messages ADD COLUMN rich_message INTEGER',
-  ]) {
+  // Migration for databases created before the `rich_message` column
+  // existed — SQLite has no "ADD COLUMN IF NOT EXISTS", so this just
+  // tries and swallows the "duplicate column" error on every boot after
+  // the first.
+  try {
+    db.exec('ALTER TABLE messages ADD COLUMN rich_message INTEGER')
+  } catch (err) {
+    if (!(err instanceof Error) || !/duplicate column/i.test(err.message)) throw err
+  }
+  // Migration dropping `raw`/`mtproto` — both existed only to serve
+  // mtproto.ts (removed 2026-09-16: Bot-to-Bot Communication Mode made its
+  // original purpose redundant, and it couldn't decode Bot API 10.x Rich
+  // Messages at all, so its dedup-losing empty arrivals were actively
+  // masking the Bot API side's correctly-flattened content). DROP COLUMN
+  // needs SQLite 3.35+ (Bun's bundled version is well past that); the
+  // catch below silently no-ops on a DB already migrated or created fresh
+  // after this removal, mirroring the ADD COLUMN pattern above.
+  for (const ddl of ['ALTER TABLE messages DROP COLUMN raw', 'ALTER TABLE messages DROP COLUMN mtproto']) {
     try {
       db.exec(ddl)
     } catch (err) {
-      if (!(err instanceof Error) || !/duplicate column/i.test(err.message)) throw err
+      if (!(err instanceof Error) || !/no such column/i.test(err.message)) throw err
     }
   }
 
   const insertStmt = db.prepare(`
     INSERT OR REPLACE INTO messages
-      (chat_id, message_id, direction, ts, user_id, content, reply_to_message_id, attachment_kind, attachment_file_id, delivered, raw, mtproto, rich_message)
+      (chat_id, message_id, direction, ts, user_id, content, reply_to_message_id, attachment_kind, attachment_file_id, delivered, rich_message)
     VALUES
-      ($chat_id, $message_id, $direction, $ts, $user_id, $content, $reply_to_message_id, $attachment_kind, $attachment_file_id, $delivered, $raw, $mtproto, $rich_message)
+      ($chat_id, $message_id, $direction, $ts, $user_id, $content, $reply_to_message_id, $attachment_kind, $attachment_file_id, $delivered, $rich_message)
   `)
   const lookupStmt = db.prepare('SELECT * FROM messages WHERE chat_id = $chat_id AND message_id = $message_id')
   const recentStmt = db.prepare('SELECT * FROM messages WHERE chat_id = $chat_id ORDER BY id DESC LIMIT $limit')
@@ -159,8 +152,6 @@ export function openStore(dbPath: string): Store {
         $attachment_kind: r.attachment_kind ?? null,
         $attachment_file_id: r.attachment_file_id ?? null,
         $delivered: r.delivered ? 1 : 0,
-        $raw: r.raw ?? null,
-        $mtproto: r.mtproto ? 1 : null,
         $rich_message: r.rich_message ? 1 : null,
       })
     },

@@ -122,32 +122,10 @@ test('formatMessageRows preserves caller-given order (newest-first is the caller
   expect(text.indexOf('second')).toBeLessThan(text.indexOf('first'))
 })
 
-test('formatMessageRow flags raw presence but does not dump it by default', () => {
-  const withRaw = formatMessageRow(rec({ raw: '{"className":"Message","id":1}' }))
-  const withoutRaw = formatMessageRow(rec())
-  expect(withRaw).toContain('raw')
-  expect(withRaw).not.toContain('className') // the marker, not the blob
-  expect(withoutRaw).not.toContain('raw')
-})
-
-test('formatMessageRow with includeRaw: true appends the full raw blob on its own line', () => {
-  const text = formatMessageRow(rec({ raw: '{"className":"Message","id":1}' }), { includeRaw: true })
-  expect(text).toContain('raw: {"className":"Message","id":1}')
-})
-
-test('formatMessageRow with includeRaw: true but no raw present adds nothing extra', () => {
-  const text = formatMessageRow(rec(), { includeRaw: true })
-  expect(text).not.toContain('raw:')
-})
-
-test('formatMessageRow flags mtproto and rich_message, before the raw marker', () => {
-  const both = formatMessageRow(rec({ mtproto: true, rich_message: true, raw: '{}' }))
-  const bracket = both.match(/\[([^\]]*)\]/)![1]
-  expect(bracket.split(', ')).toEqual(['mtproto', 'rich_message', 'raw'])
-})
-
-test('formatMessageRow says nothing extra when mtproto/rich_message are false', () => {
-  const text = formatMessageRow(rec({ mtproto: false, rich_message: false }))
-  expect(text).not.toContain('mtproto')
-  expect(text).not.toContain('rich_message')
+test('formatMessageRow flags rich_message; says nothing extra when false', () => {
+  const flagged = formatMessageRow(rec({ rich_message: true }))
+  const plain = formatMessageRow(rec({ rich_message: false }))
+  const bracket = flagged.match(/\[([^\]]*)\]/)![1]
+  expect(bracket.split(', ')).toEqual(['rich_message'])
+  expect(plain).not.toContain('rich_message')
 })

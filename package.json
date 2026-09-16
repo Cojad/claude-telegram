@@ -9,7 +9,6 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
-    "grammy": "^1.46.0",
-    "telegram": "^2.26.22"
+    "grammy": "^1.46.0"
   }
 }

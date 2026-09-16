@@ -98,22 +98,19 @@ This also means there's no `download_attachment` tool for historical messages
 — photos are downloaded eagerly on arrival since there's no way to fetch them
 later.
 
-## Seeing messages from other bots (optional, via MTProto)
+## Seeing messages from other bots
 
-Telegram's Bot API deliberately never delivers messages sent by one bot to another bot — this is
-platform-level, permanent, and unrelated to privacy mode or admin rights (see the
-[Bots FAQ](https://core.telegram.org/bots/faq)). If another bot in the group needs to reach this
-one, the Bot API path in this plugin structurally cannot see it, no matter how access is configured.
+Telegram's Bot API deliberately never delivers messages sent by one bot to another bot by default —
+this is platform-level, permanent, and unrelated to privacy mode or admin rights (see the
+[Bots FAQ](https://core.telegram.org/bots/faq)). To let this bot see another bot's messages in a
+group, enable **Bot-to-Bot Communication Mode** for both bots via [@BotFather](https://t.me/BotFather)
+— an account-level Telegram setting, not something this plugin's code does.
 
-Setting `TELEGRAM_MTPROTO_ENABLED=1` in `.env` turns on a second, independent listener over MTProto
-(via [GramJS](https://www.npmjs.com/package/telegram)) that runs alongside the normal Bot API poller.
-It logs in with the same bot token, using Telegram Desktop's own publicly-known api_id/api_hash
-(see the comment in `mtproto.ts` for exactly why, and the trade-off) rather than a credential tied
-to this deployment — nothing account-specific needs to live in `.env` or this repo for this feature.
-It only ever forwards messages whose sender is itself a bot — human messages are already handled
-reliably by the Bot API path, so this never duplicates or races it — and feeds them into the exact
-same access-control and notification pipeline as everything else. Leave the flag unset and nothing
-changes; this is fully opt-in.
+(This repo carried a second, independent MTProto listener — via GramJS — from 2026-09-15 as an
+alternative path for the same problem, removed 2026-09-16 once Bot-to-Bot Communication Mode made
+it redundant. It also couldn't decode Bot API 10.x Rich Messages at all, and its empty arrivals for
+those actively raced and masked the Bot API path's correctly-flattened content — see git history if
+a second transport is ever needed again for something Bot-to-Bot Mode doesn't cover.)
 
 ## Live progress via hooks (companion pattern)
 

@@ -319,7 +319,7 @@ export async function callTool(name: string, args: Record<string, unknown>, deps
         assertAllowedChat(chat_id)
         if (args.message_id != null) {
           const found = store.lookup(chat_id, String(args.message_id))
-          return { content: [{ type: 'text', text: found ? formatMessageRow(found, { includeRaw: true }) : 'not found' }] }
+          return { content: [{ type: 'text', text: found ? formatMessageRow(found) : 'not found' }] }
         }
         const limit = Math.max(1, Math.min(Number(args.limit) || DEFAULT_LOOKUP_LIMIT, MAX_LOOKUP_LIMIT))
         const beforeId = args.before_message_id != null ? String(args.before_message_id) : undefined

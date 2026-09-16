@@ -6,6 +6,8 @@
 // correctness — not an exhaustive SQL spec.
 
 import { afterEach, expect, test } from 'bun:test'
+import { Database } from 'bun:sqlite'
+import { unlinkSync } from 'fs'
 import { openStore, type MessageRecord, type Store } from '../store'
 
 const stores: Store[] = []
@@ -25,11 +27,10 @@ function rec(overrides: Partial<MessageRecord>): MessageRecord {
     direction: 'in',
     ts: '2026-09-15T00:00:00.000Z',
     delivered: true,
-    // toRecord() always coerces these to a concrete boolean (row.mtproto
-    // === 1), never leaves them undefined the way `raw` stays undefined —
-    // matching that here so a round-trip .toEqual() isn't comparing a
-    // record shape that lookup() can never actually return.
-    mtproto: false,
+    // toRecord() always coerces this to a concrete boolean (row.rich_message
+    // === 1), never leaves it undefined — matching that here so a
+    // round-trip .toEqual() isn't comparing a record shape lookup() can
+    // never actually return.
     rich_message: false,
     ...overrides,
   }
@@ -48,11 +49,10 @@ test('record then lookup by (chat_id, message_id) round-trips every field', () =
   }))
 })
 
-test('mtproto and rich_message flags round-trip as true when set', () => {
+test('rich_message flag round-trips as true when set', () => {
   const store = freshStore()
-  store.record(rec({ message_id: '43', mtproto: true, rich_message: true, raw: '{"className":"Message"}' }))
+  store.record(rec({ message_id: '43', rich_message: true }))
   const found = store.lookup('-100', '43')
-  expect(found?.mtproto).toBe(true)
   expect(found?.rich_message).toBe(true)
 })
 
@@ -105,10 +105,43 @@ test('an outbound (direction: out) record round-trips the same as inbound', () =
   expect(store.lookup('-100', '7')?.direction).toBe('out')
 })
 
-test('raw round-trips when present, stays undefined (not "null") when absent', () => {
-  const store = freshStore()
-  store.record(rec({ message_id: '8', raw: '{"className":"Message","id":8}' }))
-  store.record(rec({ message_id: '9' }))
-  expect(store.lookup('-100', '8')?.raw).toBe('{"className":"Message","id":8}')
-  expect(store.lookup('-100', '9')?.raw).toBeUndefined()
+test('opening a pre-removal DB (raw/mtproto columns still present) migrates cleanly', () => {
+  // Simulates a production DB from before mtproto.ts was removed
+  // (2026-09-16) — raw/mtproto existed as real columns with real data.
+  // openStore() must DROP COLUMN both without error and keep working.
+  // A real file, not ':memory:' — openStore() needs to reopen the same
+  // database a separate Database instance already seeded.
+  const path = `/tmp/store-migration-test-${Date.now()}.db`
+  const seed = new Database(path, { create: true })
+  seed.exec(`
+    CREATE TABLE messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      chat_id TEXT NOT NULL, message_id TEXT NOT NULL, direction TEXT NOT NULL,
+      ts TEXT NOT NULL, user_id TEXT, content TEXT, reply_to_message_id TEXT,
+      attachment_kind TEXT, attachment_file_id TEXT,
+      delivered INTEGER NOT NULL DEFAULT 1, raw TEXT, mtproto INTEGER
+    )
+  `)
+  seed.exec('CREATE UNIQUE INDEX idx_messages_chat_msg ON messages(chat_id, message_id)')
+  seed.exec(
+    `INSERT INTO messages (chat_id, message_id, direction, ts, delivered, raw, mtproto)
+     VALUES ('-100', '99', 'in', '2026-09-15T00:00:00.000Z', 1, '{"className":"MessageMediaUnsupported"}', 1)`,
+  )
+  seed.close()
+
+  const store = openStore(path)
+  stores.push(store)
+  const found = store.lookup('-100', '99')
+  expect(found).not.toBeNull()
+  expect((found as unknown as { raw?: unknown }).raw).toBeUndefined()
+  expect((found as unknown as { mtproto?: unknown }).mtproto).toBeUndefined()
+  // New writes still work post-migration.
+  store.record(rec({ message_id: '100', content: 'post-migration write' }))
+  expect(store.lookup('-100', '100')?.content).toBe('post-migration write')
+
+  store.close()
+  stores.pop() // already closed above, don't double-close in afterEach
+  for (const suffix of ['', '-wal', '-shm']) {
+    try { unlinkSync(path + suffix) } catch {}
+  }
 })

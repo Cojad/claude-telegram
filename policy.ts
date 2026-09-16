@@ -14,23 +14,22 @@ import { flattenRichMessage } from './rich'
 // Context} from 'grammy'`. gate()/isMentioned() only ever read these
 // fields, and a real grammY Context satisfies this shape for free
 // (structural typing), so the Bot API transport (transport.ts) needs no
-// changes. What this buys: a second transport (mtproto.ts, GramJS) can
-// feed the exact same gate()/handleInbound() pipeline by constructing one
-// of these from a completely different SDK's event shape, without either
-// transport depending on the other's library.
+// changes. What this buys: a second transport could feed the exact same
+// gate()/handleInbound() pipeline by constructing one of these from a
+// completely different SDK's event shape, without either transport
+// depending on the other's library — this repo had exactly that
+// (mtproto.ts, a GramJS/MTProto listener) from 2026-09-15 until it was
+// removed the next day: Bot-to-Bot Communication Mode made its original
+// purpose (seeing other bots' messages, which the Bot API alone
+// structurally couldn't) redundant, and it couldn't decode Bot API 10.x
+// Rich Messages at all — its dedup-losing empty arrivals were actively
+// masking the Bot API side's correctly-flattened content. See git history
+// for mtproto.ts/mtproto.test.ts if a second transport is ever needed
+// again; the shape here is still designed to support one.
 export type InboundEntity = { type: string; offset: number; length: number; user?: { is_bot?: boolean; username?: string } }
 export type InboundContext = {
   from?: { id: number | string; username?: string }
   chat?: { id: number | string; type?: string }
-  /** Set by mtproto.ts's transport; absent (not `false`) for the Bot API
-   *  path — lets a message's meta say which channel actually delivered it,
-   *  since both can now carry the same kind of traffic (Bot-to-Bot
-   *  Communication Mode means the Bot API sees other bots' messages too,
-   *  not just this listener). Cojad, 2026-09-15. */
-  mtproto?: boolean
-  /** Raw, mostly-unparsed source data for this message, when the transport
-   *  that received it captured one — see store.ts's MessageRecord.raw. */
-  raw?: string
   message?: {
     message_id?: number
     date?: number
