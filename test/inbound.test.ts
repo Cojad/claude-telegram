@@ -7,7 +7,7 @@
 
 import { expect, test } from 'bun:test'
 import type { Context } from 'grammy'
-import { buildReplyMeta, createHandleInbound, type InboundDeps } from '../inbound'
+import { buildReplyMeta, createHandleInbound, extractAttachmentMeta, type InboundDeps } from '../inbound'
 import { type Access, type GateResult } from '../policy'
 import type { MessageRecord } from '../store'
 
@@ -55,6 +55,102 @@ test('buildReplyMeta: includes reply_to_user_id when Telegram inlines the replie
 test('buildReplyMeta: omits reply_to_user_id when Telegram does not inline a sender (old message)', () => {
   const result = buildReplyMeta({ message_id: 9, text: 'hi' })
   expect('reply_to_user_id' in result).toBe(false)
+})
+
+// ---- reply_to_attachment_* (Cojad 2026-09-17: a reply to a message with
+// media gave no file_id without a manual lookup_message round-trip) --------
+
+test('extractAttachmentMeta: photo picks the largest of the sizes array', () => {
+  expect(extractAttachmentMeta({
+    photo: [{ file_id: 'small', file_unique_id: 'u1', width: 90, height: 90 },
+            { file_id: 'big', file_unique_id: 'u2', width: 1280, height: 1280, file_size: 40199 }],
+  } as never)).toEqual({ kind: 'photo', file_id: 'big', size: 40199 })
+})
+
+test('extractAttachmentMeta: document includes mime and sanitized name', () => {
+  expect(extractAttachmentMeta({
+    document: { file_id: 'doc1', file_unique_id: 'u1', file_name: 'a<b>.pdf', mime_type: 'application/pdf', file_size: 100 },
+  } as never)).toEqual({ kind: 'document', file_id: 'doc1', size: 100, mime: 'application/pdf', name: 'a_b_.pdf' })
+})
+
+test('extractAttachmentMeta: a plain text message has no attachment', () => {
+  expect(extractAttachmentMeta({ text: 'hi' } as never)).toBeUndefined()
+})
+
+test('extractAttachmentMeta: undefined message has no attachment', () => {
+  expect(extractAttachmentMeta(undefined)).toBeUndefined()
+})
+
+test('buildReplyMeta: includes reply_to_attachment_* when the replied-to message has a photo', () => {
+  expect(buildReplyMeta({
+    message_id: 55,
+    photo: [{ file_id: 'AgADabc', file_unique_id: 'u1', width: 1280, height: 1280, file_size: 40199 }],
+  } as never)).toEqual({
+    reply_to_message_id: '55',
+    reply_to_attachment_kind: 'photo',
+    reply_to_attachment_file_id: 'AgADabc',
+    reply_to_attachment_size: '40199',
+  })
+})
+
+test('buildReplyMeta: a text-only reply target gets no reply_to_attachment_* fields', () => {
+  const result = buildReplyMeta({ message_id: 55, text: 'plain text' } as never)
+  expect('reply_to_attachment_kind' in result).toBe(false)
+  expect('reply_to_attachment_file_id' in result).toBe(false)
+})
+
+test('handleInbound includes reply_to_attachment_file_id in the notification meta for a reply to a photo', async () => {
+  const { handleInbound, notifications } = harness({ action: 'deliver', access: accessAllowingEveryone() })
+  const ctx = ctxFor({
+    message_id: 100,
+    reply_to_message: {
+      message_id: 55,
+      photo: [{ file_id: 'AgADabc', file_unique_id: 'u1', width: 1280, height: 1280, file_size: 40199 }],
+    },
+  })
+
+  await handleInbound(ctx, 'nice photo', undefined)
+
+  const meta = notifications[0].params.meta as Record<string, unknown>
+  expect(meta.reply_to_attachment_kind).toBe('photo')
+  expect(meta.reply_to_attachment_file_id).toBe('AgADabc')
+  expect(meta.reply_to_attachment_size).toBe('40199')
+})
+
+test('reply_to_attachment_file_id falls back to the store when Telegram omits the whole replied-to message (old message)', async () => {
+  const { handleInbound, notifications } = harness(
+    { action: 'deliver', access: accessAllowingEveryone() },
+    { '1:55': { chat_id: '1', message_id: '55', direction: 'in', ts: '2026-01-01T00:00:00.000Z', attachment_kind: 'photo', attachment_file_id: 'AgADold', delivered: true } },
+  )
+  // Telegram gives only the id — the shape it sends when the replied-to
+  // message is too old to inline (no text, no caption, no photo array).
+  const ctx = ctxFor({ message_id: 100, reply_to_message: { message_id: 55 } })
+
+  await handleInbound(ctx, 'my answer', undefined)
+
+  const meta = notifications[0].params.meta as Record<string, unknown>
+  expect(meta.reply_to_attachment_kind).toBe('photo')
+  expect(meta.reply_to_attachment_file_id).toBe('AgADold')
+})
+
+test('a text-only reply does not trigger the store fallback lookup (no attachment to recover)', async () => {
+  // Guards against re-introducing the regression this fix hit once already:
+  // widening the fallback trigger to "text missing OR attachment missing"
+  // made every plain text reply (which never has an attachment) consult the
+  // store, doubling store.lookup() calls for the overwhelmingly common case.
+  let lookupCalls = 0
+  const deps: InboundDeps = {
+    gate: () => ({ action: 'deliver', access: accessAllowingEveryone() }),
+    bot: { api: { sendChatAction: async () => {}, setMessageReaction: async () => {} } } as never,
+    mcp: { notification: async () => undefined } as never,
+    store: { record: () => {}, lookup: () => { lookupCalls++; return null } },
+  }
+  const handleInbound = createHandleInbound(deps)
+  const ctx = ctxFor({ message_id: 104, reply_to_message: { message_id: 55, text: 'already inlined' } })
+
+  await handleInbound(ctx, 'my answer', undefined)
+
+  expect(lookupCalls).toBe(1) // only the unconditional dedup check
 })
 
 // ---- wired into handleInbound: notification payload + store recording --

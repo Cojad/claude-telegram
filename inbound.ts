@@ -5,7 +5,7 @@
 // or mcp.notification() directly — this is the only place that happens.
 
 import type { Bot } from 'grammy'
-import type { ReactionTypeEmoji } from 'grammy/types'
+import type { Message, ReactionTypeEmoji } from 'grammy/types'
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import type { Access, GateResult, InboundContext } from './policy'
 import type { Store } from './store'
@@ -38,6 +38,73 @@ export function safeName(s: string | undefined): string | undefined {
 
 const REPLY_TEXT_MAX = 200
 
+// Mirrors the six bot.on('message:<kind>', ...) attachment blocks in
+// transport.ts (photo/document/voice/audio/video/video_note/sticker) —
+// kept as a separate function rather than reused by those handlers so this
+// change doesn't touch that already-tested primary-message path. Photo
+// intentionally does not eager-download here the way transport.ts's photo
+// handler does for the primary message: this is only ever run against a
+// *replied-to* message the sender didn't just send, so there is no
+// download-then-discard-if-dropped concern to defer — but it also means
+// this only reports the file_id, never a local path; the caller fetches it
+// with download_attachment like any other attachment_file_id.
+export function extractAttachmentMeta(msg: Message | undefined): AttachmentMeta | undefined {
+  if (!msg) return undefined
+  if (msg.photo) {
+    const best = msg.photo[msg.photo.length - 1]
+    if (!best) return undefined
+    return { kind: 'photo', file_id: best.file_id, size: best.file_size }
+  }
+  if (msg.document) {
+    return {
+      kind: 'document',
+      file_id: msg.document.file_id,
+      size: msg.document.file_size,
+      mime: msg.document.mime_type,
+      name: safeName(msg.document.file_name),
+    }
+  }
+  if (msg.voice) {
+    return { kind: 'voice', file_id: msg.voice.file_id, size: msg.voice.file_size, mime: msg.voice.mime_type }
+  }
+  if (msg.audio) {
+    return {
+      kind: 'audio',
+      file_id: msg.audio.file_id,
+      size: msg.audio.file_size,
+      mime: msg.audio.mime_type,
+      name: safeName(msg.audio.file_name),
+    }
+  }
+  if (msg.video) {
+    return {
+      kind: 'video',
+      file_id: msg.video.file_id,
+      size: msg.video.file_size,
+      mime: msg.video.mime_type,
+      name: safeName(msg.video.file_name),
+    }
+  }
+  if (msg.video_note) {
+    return { kind: 'video_note', file_id: msg.video_note.file_id, size: msg.video_note.file_size }
+  }
+  if (msg.sticker) {
+    return { kind: 'sticker', file_id: msg.sticker.file_id, size: msg.sticker.file_size }
+  }
+  return undefined
+}
+
+export type ReplyMeta = {
+  reply_to_message_id?: string
+  reply_to_text?: string
+  reply_to_user_id?: string
+  reply_to_attachment_kind?: string
+  reply_to_attachment_file_id?: string
+  reply_to_attachment_size?: string
+  reply_to_attachment_mime?: string
+  reply_to_attachment_name?: string
+}
+
 // Telegram inlines the full replied-to Message object on a fresh reply (not
 // guaranteed for very old messages — Telegram may omit it, in which case
 // only reply_to_message_id would ever be available here; there is currently
@@ -51,15 +118,28 @@ const REPLY_TEXT_MAX = 200
 // asked "why is the replier's uid missing" — not a deliberate omission,
 // the type signature just never declared the field, see git history).
 // Mirrors the main sender's user/user_id shape one level up in inbound.ts.
-export function buildReplyMeta(
-  replyTo: { message_id: number; text?: string; caption?: string; from?: { id: number } } | undefined,
-): { reply_to_message_id?: string; reply_to_text?: string; reply_to_user_id?: string } {
+//
+// reply_to_attachment_*: Cojad, 2026-09-17 — a reply to a message with
+// media previously gave the receiving Claude session nothing but a
+// "(photo)"-style placeholder for reply_to_text, forcing a manual
+// lookup_message round-trip just to get the file_id needed for
+// download_attachment. Extracted here the same way so the file_id is
+// already sitting in the <channel> tag's meta on arrival.
+export function buildReplyMeta(replyTo: Message | undefined): ReplyMeta {
   if (!replyTo) return {}
   const text = replyTo.text ?? replyTo.caption
+  const attachment = extractAttachmentMeta(replyTo)
   return {
     reply_to_message_id: String(replyTo.message_id),
     ...(text != null ? { reply_to_text: text.length > REPLY_TEXT_MAX ? text.slice(0, REPLY_TEXT_MAX) + '…' : text } : {}),
     ...(replyTo.from != null ? { reply_to_user_id: String(replyTo.from.id) } : {}),
+    ...(attachment ? {
+      reply_to_attachment_kind: attachment.kind,
+      reply_to_attachment_file_id: attachment.file_id,
+      ...(attachment.size != null ? { reply_to_attachment_size: String(attachment.size) } : {}),
+      ...(attachment.mime ? { reply_to_attachment_mime: attachment.mime } : {}),
+      ...(attachment.name ? { reply_to_attachment_name: attachment.name } : {}),
+    } : {}),
   }
 }
 
@@ -110,10 +190,7 @@ export function createHandleInbound(deps: InboundDeps) {
     }
 
     const tsForStore = new Date((ctx.message?.date ?? 0) * 1000).toISOString()
-    let replyMeta = buildReplyMeta(
-      ctx.message?.reply_to_message as
-        { message_id: number; text?: string; caption?: string; from?: { id: number } } | undefined,
-    )
+    let replyMeta = buildReplyMeta(ctx.message?.reply_to_message)
     const recordSeen = (delivered: boolean): void => {
       if (!chatIdForStore || msgIdForStore == null) return // nothing to index by
       try {
@@ -156,11 +233,24 @@ export function createHandleInbound(deps: InboundDeps) {
     // Telegram didn't inline the replied-to message's text (old message, or
     // it had none to begin with — a caption-less photo, say). Fall back to
     // our own log: if that message passed through this plugin before,
-    // whichever direction, we already have its content.
+    // whichever direction, we already have its content — and, when Telegram
+    // also omitted the whole message (so extractAttachmentMeta had nothing to
+    // work with), its attachment_kind/file_id too, recorded unconditionally
+    // for every media type since 2026-09-16 (see store.ts). The store only
+    // ever kept kind+file_id, not size/mime/name, so this fallback can't
+    // recover those — same as reply_to_text being whatever was recorded, not
+    // a fresh re-fetch.
     if (replyMeta.reply_to_message_id && !replyMeta.reply_to_text && chatIdForStore) {
       try {
         const found = store.lookup(chatIdForStore, replyMeta.reply_to_message_id)
-        if (found?.content) replyMeta = { ...replyMeta, reply_to_text: found.content }
+        replyMeta = {
+          ...replyMeta,
+          ...(!replyMeta.reply_to_text && found?.content ? { reply_to_text: found.content } : {}),
+          ...(!replyMeta.reply_to_attachment_file_id && found?.attachment_file_id ? {
+            reply_to_attachment_kind: found.attachment_kind,
+            reply_to_attachment_file_id: found.attachment_file_id,
+          } : {}),
+        }
       } catch (err) {
         process.stderr.write(`telegram channel: store.lookup (reply fallback) failed: ${err}\n`)
       }
